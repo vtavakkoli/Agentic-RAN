@@ -1,66 +1,77 @@
 # Agentic O-RAN NAS Traffic Prediction Simulation
 
-This repository provides a complete Dockerized simulation framework for proactive traffic prediction in an O-RAN-inspired setup:
+A structurally extensible, Dockerized framework that simulates:
+- **Non-RT RIC / rApp NAS orchestration** (scenario definitions + complexity-aware model selection inputs)
+- **Near-RT RIC / xApp agentic inference** (training/inference + ReAct control loop)
 
-- **Non-RT RIC / rApp (NAS orchestration):** encoded by scenario definitions in `model_zoo.py`.
-- **Near-RT RIC / xApp (agentic inference):** implemented in `xapp_agent.py` with a ReAct loop (Thought, Action, Monitor).
+## Project structure (extensible)
 
-## Implemented scenarios (8 containers)
+```text
+.
+├── oran_sim/
+│   ├── config.py        # scenario catalog + feature order
+│   ├── data.py          # synthetic dataset generation + preprocessing
+│   ├── models.py        # LSTM/Attention/Liquid implementations + complexity math
+│   ├── training.py      # reusable training routine
+│   ├── agent.py         # ReAct loop (Thought/Action/Monitor)
+│   └── reporting.py     # markdown tables + chart generation
+├── generate_data.py     # entrypoint: create shared_data/traffic_data.csv
+├── xapp_agent.py        # entrypoint: run one scenario in one container
+├── evaluate_nas.py      # entrypoint: aggregate + rank + report
+├── docker-compose.yml   # 8 concurrent services (one per scenario)
+├── Dockerfile
+└── requirements.txt
+```
 
-1. `lightweight-32` (LSTM 1x32, 6 features)
-2. `lightweight-64` (LSTM 1x64, 6 features)
-3. `balanced-small` (LSTM 64x32, 8 features)
-4. `balanced-medium` (LSTM 100x50, 8 features)
-5. `deep-performance` (LSTM 128x100x64, 10 features)
-6. `ultra-performance` (LSTM 512x256x128, 16 features)
-7. `attention-baseline` (Transformer-like baseline, 8 features)
-8. `liquid-baseline` (Liquid-style continuous-time RNN baseline, 6 features)
+## Scenarios (8)
+1. `lightweight-32`
+2. `lightweight-64`
+3. `balanced-small`
+4. `balanced-medium`
+5. `deep-performance`
+6. `ultra-performance`
+7. `attention-baseline`
+8. `liquid-baseline`
 
-## File overview
+## Math implemented
 
-- `generate_data.py`: Generates ~5000-step synthetic 16-feature multivariate traffic data.
-- `model_zoo.py`: Dynamic model factory and complexity utilities.
-- `xapp_agent.py`: Per-container train/inference + ReAct loop + metrics export.
-- `evaluate_nas.py`: Aggregates and ranks scenarios with normalized efficiency.
-- `Dockerfile`: Runtime image with required ML dependencies.
-- `docker-compose.yml`: 8 concurrent services, one per scenario.
+- **Exact LSTM layer complexity**:
+  \[
+  C_{LSTM}=4\times(d_xd_h+d_h^2+d_h)
+  \]
+- Stacked LSTM total = sum of layer-wise complexities.
+- Attention/Liquid use generalized complexity proxies for cross-architecture comparison.
+- NAS efficiency:
+  \[
+  C_{norm}=\frac{C_{model}}{\max(C_{model})}, \quad E=\frac{C_{norm}}{P_{norm}}
+  \]
+  where `P_norm` is derived from normalized `R^2`.
 
-## Run instructions
+## Run
 
-### 1) Generate shared synthetic dataset
-
+### 1) Generate data
 ```bash
 python generate_data.py --steps 5000 --output shared_data/traffic_data.csv
 ```
 
-### 2) Build and run all model containers concurrently
-
+### 2) Launch all 8 scenario containers concurrently
 ```bash
-docker compose up --build --abort-on-container-exit
+docker compose up --build
 ```
 
-This creates/updates:
+Each service reads `shared_data/traffic_data.csv` and appends its metrics to `shared_data/results.csv`.
 
-- `shared_data/results.csv` (all scenario metrics)
-
-### 3) Evaluate NAS efficiency after container completion
-
+### 3) Build NAS report (tables + charts)
 ```bash
-python evaluate_nas.py --input shared_data/results.csv --output shared_data/nas_efficiency.csv
+python evaluate_nas.py \
+  --input shared_data/results.csv \
+  --output shared_data/nas_efficiency.csv \
+  --report shared_data/nas_report.md \
+  --chart_dir shared_data/charts
 ```
 
-Output:
-
-- `shared_data/nas_efficiency.csv` with:
-  - `c_norm = C_model / max(C_model)`
-  - `p_norm` derived from normalized `R^2`
-  - `efficiency_E = c_norm / p_norm`
-
-## Notes on complexity formulas
-
-- **LSTM formula (exactly implemented):**
-  \[
-  C_{LSTM} = 4 \times (d_x d_h + d_h^2 + d_h)
-  \]
-- For stacked LSTMs, this is summed per layer using the previous layer hidden size as next layer input.
-- Attention and Liquid models use generalized operation proxies in `model_zoo.py` for cross-paradigm comparison.
+Generated outputs:
+- `shared_data/nas_efficiency.csv`
+- `shared_data/nas_report.md` (comparison tables)
+- `shared_data/charts/r2_vs_complexity.png`
+- `shared_data/charts/efficiency_ranking.png`
