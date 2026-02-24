@@ -3,23 +3,34 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
-FEATURE_ORDER: List[str] = [
+# oran_sim/config.py
+
+FEATURE_ORDER = [
+    # UE radio/link quality (core)
     "rsrp",
-    "rsrq",
-    "sinr",
-    "prb_utilization",
+    "dl_snr",
+    "pl",
+    "cfo",
+    "ul_ta",
+
+    # MCS / reliability (PHY/MAC)
+    "dl_mcs",
+    "ul_mcs",
+    "dl_bler",
+    "ul_bler",
+
+    # Throughput / buffer / utilization (MAC)
+    "dl_brate_ue",
+    "ul_brate_ue",
+    "ul_buff",
+
+    # RF indicators
+    "rf_o",
+    "rf_u",
+    "rf_l",
+
+    # Context
     "ue_count",
-    "handover_rate",
-    "packet_loss",
-    "latency_ms",
-    "hour_sin",
-    "hour_cos",
-    "day_of_week",
-    "is_weekend",
-    "mobility_index",
-    "video_demand",
-    "gaming_demand",
-    "iot_demand",
 ]
 
 
