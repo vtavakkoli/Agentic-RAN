@@ -49,9 +49,12 @@ A structurally extensible, Dockerized framework that simulates:
 
 ## Run
 
-### 1) Generate data
+### 1) Generate data or read from data-kpm
 ```bash
 python generate_data.py --steps 5000 --output shared_data/traffic_data.csv
+```
+```bash
+python generate_data.py --step 10000 --input shared_data/dataset-kpm --output shared_data/traffic_data.csv
 ```
 
 ### 2) Launch all 8 scenario containers concurrently
