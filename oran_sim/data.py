@@ -223,11 +223,13 @@ def load_timeseries_from_kpm(
     """
     Build consolidated timeseries from the O-RAN KPM dataset folder.
 
-    Output:
-      - time (numeric)
-      - columns in FEATURE_ORDER
-      - traffic_load (from enb dl_brate)
+    Progress output includes:
+      - processed experiments / total
+      - rows accumulated
+      - rows/sec and ETA (rough)
     """
+    import time as _time
+
     root = Path(root_dir)
     exp_dirs = sorted(root.glob("cluster_*/slicing_*/scheduling_*/RESERVATION-*"))
 
@@ -240,8 +242,14 @@ def load_timeseries_from_kpm(
     out_frames: List[pd.DataFrame] = []
     skipped = 0
     used = 0
+    rows_so_far = 0
 
-    for exp in exp_dirs:
+    t0 = _time.time()
+    last_print = t0
+
+    total = len(exp_dirs)
+
+    for i, exp in enumerate(exp_dirs, start=1):
         enb_path = exp / "bs" / "enb_metrics.csv"
         if not enb_path.exists():
             skipped += 1
@@ -255,20 +263,17 @@ def load_timeseries_from_kpm(
         ue_files = sorted(exp.glob("ue_*/ue_metrics.csv"))
         ue_agg = _aggregate_ues(ue_files, verbose=verbose)
 
-        # Join on exact time
+        # Join on time
         if not ue_agg.empty and "time" in ue_agg.columns:
             df = enb.merge(ue_agg, on="time", how="left")
         else:
             df = enb.copy()
 
-        # Target
+        # Target + context
         df["traffic_load"] = pd.to_numeric(df["dl_brate"], errors="coerce")
-
-        # Context: ue_count from enb nof_ue (preferred)
         if "nof_ue" in df.columns:
             df["ue_count"] = pd.to_numeric(df["nof_ue"], errors="coerce")
         else:
-            # fallback: number of UE folders (constant for this experiment)
             df["ue_count"] = float(len([p for p in exp.glob("ue_*") if p.is_dir()]))
 
         # Ensure columns exist
@@ -277,17 +282,47 @@ def load_timeseries_from_kpm(
                 df[col] = 0.0
 
         # Force numeric
-        for col in FEATURE_ORDER + ["traffic_load", "time"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+        for col in ["time"] + FEATURE_ORDER + ["traffic_load"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
         df = df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-
-        # Keep only what training needs (+ time for sorting/debug)
         df = df[["time"] + FEATURE_ORDER + ["traffic_load"]].copy()
 
         out_frames.append(df)
         used += 1
+        rows_so_far += len(df)
+
+        # If user asked for n_steps, we can stop early once we have enough
+        if n_steps is not None and n_steps > 0 and rows_so_far >= n_steps:
+            if verbose:
+                print(f"[INFO] Reached requested --step={n_steps} rows. Stopping early.")
+            break
+
+        # Progress print every ~1s (and at end)
+        now = _time.time()
+        if verbose and (now - last_print >= 1.0 or i == total):
+            elapsed = max(now - t0, 1e-9)
+            rps = rows_so_far / elapsed
+
+            # Estimate total rows based on average rows/experiment so far
+            avg_rows_per_exp = rows_so_far / max(i, 1)
+            est_total_rows = avg_rows_per_exp * total
+            remaining_rows = max(est_total_rows - rows_so_far, 0.0)
+            eta_sec = remaining_rows / max(rps, 1e-9)
+
+            def _fmt_eta(sec: float) -> str:
+                sec = int(max(sec, 0))
+                h = sec // 3600
+                m = (sec % 3600) // 60
+                s = sec % 60
+                return f"{h:02d}:{m:02d}:{s:02d}"
+
+            pct = (i / total) * 100.0
+            print(
+                f"[PROGRESS] {i}/{total} experiments ({pct:5.1f}%) | "
+                f"rows={rows_so_far:,} | {rps:,.1f} rows/s | ETA~{_fmt_eta(eta_sec)}"
+            )
+            last_print = now
 
     if not out_frames:
         raise RuntimeError(
@@ -296,17 +331,16 @@ def load_timeseries_from_kpm(
         )
 
     full = pd.concat(out_frames, axis=0, ignore_index=True)
-
-    # Sort by time across concatenated experiments (simple approach)
     full = full.sort_values("time").reset_index(drop=True)
 
-    # Truncate if requested
+    # Truncate to exact n_steps if requested
     if n_steps is not None and n_steps > 0 and len(full) > n_steps:
         full = full.iloc[:n_steps].copy()
 
     if verbose:
+        elapsed = max(_time.time() - t0, 1e-9)
         print(f"[INFO] Loaded experiments: {used}/{len(exp_dirs)} (skipped={skipped})")
-        print(f"[INFO] Final rows: {len(full)} ; columns: {list(full.columns)}")
+        print(f"[INFO] Final rows: {len(full):,} in {elapsed:.1f}s ({len(full)/elapsed:,.1f} rows/s)")
 
     return full
 
