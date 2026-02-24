@@ -189,16 +189,10 @@ def load_timeseries_from_kpm(
     """
     Builds traffic_data.csv rows from the dataset folder.
 
-    Logs for each experiment:
-      - enb_metrics rows
-      - UE files found
-      - UE rows read total
-      - UE unique time rows after aggregation
-      - merged rows
+    Stops early when n_steps is reached (so it won't scan all experiments).
     """
     root = Path(root_dir)
 
-    # IMPORTANT: search recursively so it works whether root is dataset-kpm/ or dataset-kpm/open-ran.../
     exp_dirs = sorted(root.glob("**/cluster_*/slicing_*/scheduling_*/RESERVATION-*"))
 
     if verbose:
@@ -214,8 +208,15 @@ def load_timeseries_from_kpm(
     out_frames: List[pd.DataFrame] = []
     used = 0
     skipped = 0
+    total_rows = 0  # <-- track rows as we go
 
     for i, exp in enumerate(exp_dirs, start=1):
+        # Early stop BEFORE heavy IO if we already have enough
+        if n_steps is not None and n_steps > 0 and total_rows >= n_steps:
+            if verbose:
+                print(f"[INFO] Reached requested n_steps={n_steps}. Stopping early at experiment {i-1}.")
+            break
+
         enb_path = exp / "bs" / "enb_metrics.csv"
         if not enb_path.exists():
             skipped += 1
@@ -238,9 +239,8 @@ def load_timeseries_from_kpm(
         else:
             df = enb.copy()
 
-        # Build target + context
+        # Target + context
         df["traffic_load"] = pd.to_numeric(df["dl_brate"], errors="coerce")
-
         if "nof_ue" in df.columns:
             df["ue_count"] = pd.to_numeric(df["nof_ue"], errors="coerce")
         else:
@@ -258,16 +258,33 @@ def load_timeseries_from_kpm(
 
         df = df[["time"] + FEATURE_ORDER + ["traffic_load"]].copy()
 
+        # If this experiment would push us beyond n_steps, cut it here
+        if n_steps is not None and n_steps > 0:
+            remaining = n_steps - total_rows
+            if remaining <= 0:
+                if verbose:
+                    print(f"[INFO] Reached requested n_steps={n_steps}. Stopping.")
+                break
+            if len(df) > remaining:
+                df = df.iloc[:remaining].copy()
+
         out_frames.append(df)
         used += 1
+        total_rows += len(df)
 
         if verbose:
             print(
                 f"[OK] {i}/{len(exp_dirs)} {exp} | "
                 f"enb_rows={len(enb)} | ue_files={len(ue_files)} | "
                 f"ue_rows_read={ue_total_rows} | ue_agg_times={ue_unique_times} | "
-                f"merged_rows={len(df)}"
+                f"merged_rows={len(df)} | total_rows={total_rows}"
             )
+
+        # Early stop AFTER adding
+        if n_steps is not None and n_steps > 0 and total_rows >= n_steps:
+            if verbose:
+                print(f"[INFO] Reached requested n_steps={n_steps}. Stopping early.")
+            break
 
     if not out_frames:
         raise RuntimeError(
@@ -278,12 +295,13 @@ def load_timeseries_from_kpm(
     full = pd.concat(out_frames, axis=0, ignore_index=True)
     full = full.sort_values("time").reset_index(drop=True)
 
+    # Final safety truncation
     if n_steps is not None and n_steps > 0 and len(full) > n_steps:
         full = full.iloc[:n_steps].copy()
 
     if verbose:
-        print(f"[INFO] Loaded experiments: {used}/{len(exp_dirs)} (skipped={skipped})")
-        print(f"[INFO] Final rows: {len(full)} ; final columns: {list(full.columns)}")
+        print(f"[INFO] Loaded experiments used={used}, skipped={skipped}, total_rows={len(full)}")
+        print(f"[INFO] Final columns: {list(full.columns)}")
 
     return full
 
