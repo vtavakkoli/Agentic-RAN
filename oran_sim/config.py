@@ -5,6 +5,7 @@ from typing import Dict, List
 
 # oran_sim/config.py
 
+# oran_sim/config.py
 FEATURE_ORDER = [
     # UE radio/link quality (core)
     "rsrp",
@@ -12,23 +13,19 @@ FEATURE_ORDER = [
     "pl",
     "cfo",
     "ul_ta",
-
     # MCS / reliability (PHY/MAC)
     "dl_mcs",
     "ul_mcs",
     "dl_bler",
     "ul_bler",
-
-    # Throughput / buffer / utilization (MAC)
+    # Throughput / buffer (MAC)
     "dl_brate_ue",
     "ul_brate_ue",
     "ul_buff",
-
     # RF indicators
     "rf_o",
     "rf_u",
     "rf_l",
-
     # Context
     "ue_count",
 ]
