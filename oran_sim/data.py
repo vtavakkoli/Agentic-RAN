@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Tuple, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -9,6 +9,10 @@ from sklearn.preprocessing import StandardScaler
 
 from oran_sim.config import FEATURE_ORDER
 
+
+# ---------------------------
+# Synthetic generator (unchanged)
+# ---------------------------
 
 def generate_timeseries(n_steps: int, seed: int = 42) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
@@ -50,7 +54,11 @@ def generate_timeseries(n_steps: int, seed: int = 42) -> pd.DataFrame:
             + 0.08 * (1 - np.clip((sinr[i] + 5) / 35, 0, 1))
             + 0.12 * daily_cycle[i]
         )
-        traffic_load[i] = base + rng.normal(0, 0.03) if i == 0 else 0.68 * traffic_load[i - 1] + 0.32 * base + rng.normal(0, 0.02)
+        traffic_load[i] = (
+            base + rng.normal(0, 0.03)
+            if i == 0
+            else 0.68 * traffic_load[i - 1] + 0.32 * base + rng.normal(0, 0.02)
+        )
 
     return pd.DataFrame(
         {
@@ -76,6 +84,173 @@ def generate_timeseries(n_steps: int, seed: int = 42) -> pd.DataFrame:
     )
 
 
+# ---------------------------
+# Real dataset loader (O-RAN KPM folder)
+# ---------------------------
+
+_ENB_COLS = ["time", "nof_ue", "dl_brate", "ul_brate"]
+
+# Map UE CSV columns -> normalized feature names you want in FEATURE_ORDER
+_UE_TO_FEATURE = {
+    "rsrp": "rsrp",
+    "dl_snr": "dl_snr",
+    "pl": "pl",
+    "cfo": "cfo",
+    "ul_ta": "ul_ta",
+    "dl_mcs": "dl_mcs",
+    "ul_mcs": "ul_mcs",
+    "dl_bler": "dl_bler",
+    "ul_bler": "ul_bler",
+    "dl_brate": "dl_brate_ue",
+    "ul_brate": "ul_brate_ue",
+    "ul_buff": "ul_buff",
+    "rf_o": "rf_o",
+    "rf_u": "rf_u",
+    "rf_l": "rf_l",
+}
+
+
+def _read_enb_metrics(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)  # comma-separated
+    # keep only needed columns if present
+    keep = [c for c in _ENB_COLS if c in df.columns]
+    df = df[keep].copy()
+    df["time"] = pd.to_numeric(df["time"], errors="coerce")
+    df = df.dropna(subset=["time"]).sort_values("time")
+    return df
+
+
+def _read_ue_metrics(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path, sep=";")  # UE metrics are semicolon-separated
+    if "time" not in df.columns:
+        raise ValueError(f"Missing 'time' column in {path}")
+    df["time"] = pd.to_numeric(df["time"], errors="coerce")
+    df = df.dropna(subset=["time"]).sort_values("time")
+    return df
+
+
+def _aggregate_ues(ue_metric_files: List[Path]) -> pd.DataFrame:
+    frames = []
+    for f in ue_metric_files:
+        try:
+            u = _read_ue_metrics(f)
+        except Exception:
+            continue
+
+        # select the columns we can map
+        available = [c for c in _UE_TO_FEATURE.keys() if c in u.columns]
+        if not available:
+            continue
+
+        sub = u[["time"] + available].copy()
+        # numeric convert
+        for c in available:
+            sub[c] = pd.to_numeric(sub[c], errors="coerce")
+        frames.append(sub)
+
+    if not frames:
+        # return empty frame with time
+        return pd.DataFrame(columns=["time"])
+
+    all_ue = pd.concat(frames, axis=0, ignore_index=True)
+
+    # mean over UEs at each time
+    agg = all_ue.groupby("time", as_index=False).mean(numeric_only=True)
+
+    # rename to normalized feature columns
+    rename = {src: dst for src, dst in _UE_TO_FEATURE.items() if src in agg.columns}
+    agg = agg.rename(columns=rename)
+    return agg
+
+
+def load_timeseries_from_kpm(root_dir: str | Path, n_steps: Optional[int] = None) -> pd.DataFrame:
+    """
+    Build one consolidated timeseries table from the O-RAN KPM dataset folder.
+
+    Output columns:
+    - traffic_load (from enb dl_brate)
+    - ue_count (from enb nof_ue)
+    - plus UE aggregated features that exist (see _UE_TO_FEATURE)
+    """
+    root = Path(root_dir)
+    exp_dirs = sorted(root.glob("cluster_*/slicing_*/scheduling_*/RESERVATION-*"))
+
+    if not exp_dirs:
+        raise FileNotFoundError(
+            f"No RESERVATION-* folders found under: {root}. "
+            f"Expected: cluster_*/slicing_*/scheduling_*/RESERVATION-*"
+        )
+
+    out_frames: List[pd.DataFrame] = []
+
+    for exp in exp_dirs:
+        enb_path = exp / "bs" / "enb_metrics.csv"
+        if not enb_path.exists():
+            continue
+
+        enb = _read_enb_metrics(enb_path)
+        if enb.empty:
+            continue
+
+        # UE files
+        ue_files = sorted(exp.glob("ue_*/ue_metrics.csv"))
+        ue_agg = _aggregate_ues(ue_files)
+
+        # Join on time (nearest exact match; if mismatch you can resample outside)
+        df = enb.merge(ue_agg, on="time", how="left")
+
+        # Required target + context
+        if "dl_brate" not in df.columns:
+            continue
+
+        df["traffic_load"] = pd.to_numeric(df["dl_brate"], errors="coerce")
+        df["ue_count"] = pd.to_numeric(df.get("nof_ue", np.nan), errors="coerce")
+
+        # drop raw enb columns except what you want
+        # (keep time if you want debugging; training drops it anyway)
+        # Here we keep time so you can inspect; you can drop in generate_data.py if desired.
+        # df = df.drop(columns=[c for c in ["dl_brate", "ul_brate", "nof_ue"] if c in df.columns])
+
+        # Add basic sanity fills
+        df = df.replace([np.inf, -np.inf], np.nan)
+
+        out_frames.append(df)
+
+    if not out_frames:
+        raise RuntimeError(f"Found experiments under {root}, but none produced usable tables (missing enb_metrics?)")
+
+    full = pd.concat(out_frames, axis=0, ignore_index=True)
+
+    # Sort by time within the concatenated stream
+    if "time" in full.columns:
+        full = full.sort_values("time").reset_index(drop=True)
+
+    # Truncate to n_steps if requested
+    if n_steps is not None and n_steps > 0 and len(full) > n_steps:
+        full = full.iloc[:n_steps].copy()
+
+    # Ensure all required columns exist for training
+    for col in FEATURE_ORDER + ["traffic_load"]:
+        if col not in full.columns:
+            full[col] = 0.0
+
+    # Prefer numeric types
+    for col in FEATURE_ORDER + ["traffic_load"]:
+        full[col] = pd.to_numeric(full[col], errors="coerce")
+
+    full = full.fillna(0.0)
+
+    # Optional: keep only features + target (+ time if you want)
+    keep = ["time"] + FEATURE_ORDER + ["traffic_load"] if "time" in full.columns else FEATURE_ORDER + ["traffic_load"]
+    full = full[keep]
+
+    return full
+
+
+# ---------------------------
+# Training prep (robust)
+# ---------------------------
+
 def build_sequences(features: np.ndarray, target: np.ndarray, seq_len: int) -> Tuple[np.ndarray, np.ndarray]:
     x, y = [], []
     for i in range(seq_len, len(features)):
@@ -84,8 +259,20 @@ def build_sequences(features: np.ndarray, target: np.ndarray, seq_len: int) -> T
     return np.asarray(x, dtype=np.float32), np.asarray(y, dtype=np.float32)
 
 
-def prepare_dataset(csv_path: str, feature_count: int, seq_len: int) -> Tuple[np.ndarray, np.ndarray, StandardScaler, StandardScaler, list[str]]:
+def prepare_dataset(
+    csv_path: str,
+    feature_count: int,
+    seq_len: int,
+) -> Tuple[np.ndarray, np.ndarray, StandardScaler, StandardScaler, list[str]]:
     df = pd.read_csv(csv_path)
+
+    # Make sure required columns exist even if some experiments lack KPIs
+    for col in FEATURE_ORDER + ["traffic_load"]:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    df = df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
     selected_features = FEATURE_ORDER[:feature_count]
     x_raw = df[selected_features].values
     y_raw = df["traffic_load"].values.astype(np.float32)
@@ -93,6 +280,7 @@ def prepare_dataset(csv_path: str, feature_count: int, seq_len: int) -> Tuple[np
     x_scaler, y_scaler = StandardScaler(), StandardScaler()
     x_scaled = x_scaler.fit_transform(x_raw)
     y_scaled = y_scaler.fit_transform(y_raw.reshape(-1, 1)).reshape(-1)
+
     x_seq, y_seq = build_sequences(x_scaled, y_scaled, seq_len=seq_len)
     return x_seq, y_seq, x_scaler, y_scaler, selected_features
 
