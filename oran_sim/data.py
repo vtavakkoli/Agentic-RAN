@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Tuple, List, Optional
+from typing import Tuple, List, Optional
 
 import numpy as np
 import pandas as pd
+from pandas.errors import EmptyDataError
 from sklearn.preprocessing import StandardScaler
 
 from oran_sim.config import FEATURE_ORDER
@@ -63,22 +64,6 @@ def generate_timeseries(n_steps: int, seed: int = 42) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "timestamp": pd.date_range("2024-01-01", periods=n_steps, freq="h"),
-            "rsrp": rsrp,
-            "rsrq": rsrq,
-            "sinr": sinr,
-            "prb_utilization": prb_utilization,
-            "ue_count": ue_count,
-            "handover_rate": handover_rate,
-            "packet_loss": packet_loss,
-            "latency_ms": latency_ms,
-            "hour_sin": hour_sin,
-            "hour_cos": hour_cos,
-            "day_of_week": day_of_week,
-            "is_weekend": is_weekend,
-            "mobility_index": mobility_index,
-            "video_demand": video_demand,
-            "gaming_demand": gaming_demand,
-            "iot_demand": iot_demand,
             "traffic_load": np.clip(traffic_load, 0, 1.2),
         }
     )
@@ -90,7 +75,7 @@ def generate_timeseries(n_steps: int, seed: int = 42) -> pd.DataFrame:
 
 _ENB_COLS = ["time", "nof_ue", "dl_brate", "ul_brate"]
 
-# Map UE CSV columns -> normalized feature names you want in FEATURE_ORDER
+# Map UE CSV columns -> normalized feature names used in FEATURE_ORDER
 _UE_TO_FEATURE = {
     "rsrp": "rsrp",
     "dl_snr": "dl_snr",
@@ -110,67 +95,138 @@ _UE_TO_FEATURE = {
 }
 
 
-def _read_enb_metrics(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)  # comma-separated
-    # keep only needed columns if present
+def _safe_empty_df(cols: List[str]) -> pd.DataFrame:
+    return pd.DataFrame(columns=cols)
+
+
+def _read_enb_metrics(path: Path, verbose: bool = False) -> pd.DataFrame:
+    # Skip empty files quickly
+    try:
+        if path.stat().st_size == 0:
+            if verbose:
+                print(f"[WARN] Empty enb_metrics.csv: {path}")
+            return _safe_empty_df(_ENB_COLS)
+    except OSError:
+        if verbose:
+            print(f"[WARN] Cannot stat enb_metrics.csv: {path}")
+        return _safe_empty_df(_ENB_COLS)
+
+    try:
+        df = pd.read_csv(path)  # comma-separated
+    except EmptyDataError:
+        if verbose:
+            print(f"[WARN] EmptyDataError enb_metrics.csv: {path}")
+        return _safe_empty_df(_ENB_COLS)
+    except Exception as e:
+        if verbose:
+            print(f"[WARN] Failed reading enb_metrics.csv: {path} ({e})")
+        return _safe_empty_df(_ENB_COLS)
+
+    if df is None or df.empty:
+        return _safe_empty_df(_ENB_COLS)
+
     keep = [c for c in _ENB_COLS if c in df.columns]
+    if "time" not in keep or "dl_brate" not in keep:
+        if verbose:
+            print(f"[WARN] Missing required cols in {path}. Have={list(df.columns)}")
+        return _safe_empty_df(_ENB_COLS)
+
     df = df[keep].copy()
     df["time"] = pd.to_numeric(df["time"], errors="coerce")
+    df["dl_brate"] = pd.to_numeric(df["dl_brate"], errors="coerce")
+    if "nof_ue" in df.columns:
+        df["nof_ue"] = pd.to_numeric(df["nof_ue"], errors="coerce")
+    if "ul_brate" in df.columns:
+        df["ul_brate"] = pd.to_numeric(df["ul_brate"], errors="coerce")
+
     df = df.dropna(subset=["time"]).sort_values("time")
     return df
 
 
-def _read_ue_metrics(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path, sep=";")  # UE metrics are semicolon-separated
+def _read_ue_metrics(path: Path, verbose: bool = False) -> pd.DataFrame:
+    try:
+        if path.stat().st_size == 0:
+            if verbose:
+                print(f"[WARN] Empty ue_metrics.csv: {path}")
+            return _safe_empty_df(["time"])
+    except OSError:
+        if verbose:
+            print(f"[WARN] Cannot stat ue_metrics.csv: {path}")
+        return _safe_empty_df(["time"])
+
+    try:
+        df = pd.read_csv(path, sep=";")  # UE metrics are semicolon-separated
+    except EmptyDataError:
+        if verbose:
+            print(f"[WARN] EmptyDataError ue_metrics.csv: {path}")
+        return _safe_empty_df(["time"])
+    except Exception as e:
+        if verbose:
+            print(f"[WARN] Failed reading ue_metrics.csv: {path} ({e})")
+        return _safe_empty_df(["time"])
+
+    if df is None or df.empty:
+        return _safe_empty_df(["time"])
+
     if "time" not in df.columns:
-        raise ValueError(f"Missing 'time' column in {path}")
+        if verbose:
+            print(f"[WARN] Missing 'time' in ue_metrics.csv: {path}. Have={list(df.columns)}")
+        return _safe_empty_df(["time"])
+
     df["time"] = pd.to_numeric(df["time"], errors="coerce")
     df = df.dropna(subset=["time"]).sort_values("time")
     return df
 
 
-def _aggregate_ues(ue_metric_files: List[Path]) -> pd.DataFrame:
-    frames = []
+def _aggregate_ues(ue_metric_files: List[Path], verbose: bool = False) -> pd.DataFrame:
+    """
+    Reads ue_metrics.csv from multiple UE folders and aggregates to one row per 'time'
+    by averaging numeric KPIs across UEs.
+    Returns columns named per FEATURE_ORDER (where possible) plus 'time'.
+    """
+    frames: List[pd.DataFrame] = []
+
     for f in ue_metric_files:
-        try:
-            u = _read_ue_metrics(f)
-        except Exception:
+        u = _read_ue_metrics(f, verbose=verbose)
+        if u.empty or "time" not in u.columns:
             continue
 
-        # select the columns we can map
-        available = [c for c in _UE_TO_FEATURE.keys() if c in u.columns]
-        if not available:
+        available_src_cols = [c for c in _UE_TO_FEATURE.keys() if c in u.columns]
+        if not available_src_cols:
             continue
 
-        sub = u[["time"] + available].copy()
-        # numeric convert
-        for c in available:
+        sub = u[["time"] + available_src_cols].copy()
+        for c in available_src_cols:
             sub[c] = pd.to_numeric(sub[c], errors="coerce")
         frames.append(sub)
 
     if not frames:
-        # return empty frame with time
-        return pd.DataFrame(columns=["time"])
+        return _safe_empty_df(["time"])
 
     all_ue = pd.concat(frames, axis=0, ignore_index=True)
 
-    # mean over UEs at each time
+    # Average over UEs for each time
     agg = all_ue.groupby("time", as_index=False).mean(numeric_only=True)
 
-    # rename to normalized feature columns
+    # Rename to normalized feature columns
     rename = {src: dst for src, dst in _UE_TO_FEATURE.items() if src in agg.columns}
     agg = agg.rename(columns=rename)
+
     return agg
 
 
-def load_timeseries_from_kpm(root_dir: str | Path, n_steps: Optional[int] = None) -> pd.DataFrame:
+def load_timeseries_from_kpm(
+    root_dir: str | Path,
+    n_steps: Optional[int] = None,
+    verbose: bool = True,
+) -> pd.DataFrame:
     """
-    Build one consolidated timeseries table from the O-RAN KPM dataset folder.
+    Build consolidated timeseries from the O-RAN KPM dataset folder.
 
-    Output columns:
-    - traffic_load (from enb dl_brate)
-    - ue_count (from enb nof_ue)
-    - plus UE aggregated features that exist (see _UE_TO_FEATURE)
+    Output:
+      - time (numeric)
+      - columns in FEATURE_ORDER
+      - traffic_load (from enb dl_brate)
     """
     root = Path(root_dir)
     exp_dirs = sorted(root.glob("cluster_*/slicing_*/scheduling_*/RESERVATION-*"))
@@ -182,67 +238,75 @@ def load_timeseries_from_kpm(root_dir: str | Path, n_steps: Optional[int] = None
         )
 
     out_frames: List[pd.DataFrame] = []
+    skipped = 0
+    used = 0
 
     for exp in exp_dirs:
         enb_path = exp / "bs" / "enb_metrics.csv"
         if not enb_path.exists():
+            skipped += 1
             continue
 
-        enb = _read_enb_metrics(enb_path)
+        enb = _read_enb_metrics(enb_path, verbose=verbose)
         if enb.empty:
+            skipped += 1
             continue
 
-        # UE files
         ue_files = sorted(exp.glob("ue_*/ue_metrics.csv"))
-        ue_agg = _aggregate_ues(ue_files)
+        ue_agg = _aggregate_ues(ue_files, verbose=verbose)
 
-        # Join on time (nearest exact match; if mismatch you can resample outside)
-        df = enb.merge(ue_agg, on="time", how="left")
+        # Join on exact time
+        if not ue_agg.empty and "time" in ue_agg.columns:
+            df = enb.merge(ue_agg, on="time", how="left")
+        else:
+            df = enb.copy()
 
-        # Required target + context
-        if "dl_brate" not in df.columns:
-            continue
-
+        # Target
         df["traffic_load"] = pd.to_numeric(df["dl_brate"], errors="coerce")
-        df["ue_count"] = pd.to_numeric(df.get("nof_ue", np.nan), errors="coerce")
 
-        # drop raw enb columns except what you want
-        # (keep time if you want debugging; training drops it anyway)
-        # Here we keep time so you can inspect; you can drop in generate_data.py if desired.
-        # df = df.drop(columns=[c for c in ["dl_brate", "ul_brate", "nof_ue"] if c in df.columns])
+        # Context: ue_count from enb nof_ue (preferred)
+        if "nof_ue" in df.columns:
+            df["ue_count"] = pd.to_numeric(df["nof_ue"], errors="coerce")
+        else:
+            # fallback: number of UE folders (constant for this experiment)
+            df["ue_count"] = float(len([p for p in exp.glob("ue_*") if p.is_dir()]))
 
-        # Add basic sanity fills
-        df = df.replace([np.inf, -np.inf], np.nan)
+        # Ensure columns exist
+        for col in FEATURE_ORDER + ["traffic_load"]:
+            if col not in df.columns:
+                df[col] = 0.0
+
+        # Force numeric
+        for col in FEATURE_ORDER + ["traffic_load", "time"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df = df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+        # Keep only what training needs (+ time for sorting/debug)
+        df = df[["time"] + FEATURE_ORDER + ["traffic_load"]].copy()
 
         out_frames.append(df)
+        used += 1
 
     if not out_frames:
-        raise RuntimeError(f"Found experiments under {root}, but none produced usable tables (missing enb_metrics?)")
+        raise RuntimeError(
+            f"Found experiments under {root}, but none produced usable tables. "
+            f"Skipped={skipped}, Total={len(exp_dirs)}"
+        )
 
     full = pd.concat(out_frames, axis=0, ignore_index=True)
 
-    # Sort by time within the concatenated stream
-    if "time" in full.columns:
-        full = full.sort_values("time").reset_index(drop=True)
+    # Sort by time across concatenated experiments (simple approach)
+    full = full.sort_values("time").reset_index(drop=True)
 
-    # Truncate to n_steps if requested
+    # Truncate if requested
     if n_steps is not None and n_steps > 0 and len(full) > n_steps:
         full = full.iloc[:n_steps].copy()
 
-    # Ensure all required columns exist for training
-    for col in FEATURE_ORDER + ["traffic_load"]:
-        if col not in full.columns:
-            full[col] = 0.0
-
-    # Prefer numeric types
-    for col in FEATURE_ORDER + ["traffic_load"]:
-        full[col] = pd.to_numeric(full[col], errors="coerce")
-
-    full = full.fillna(0.0)
-
-    # Optional: keep only features + target (+ time if you want)
-    keep = ["time"] + FEATURE_ORDER + ["traffic_load"] if "time" in full.columns else FEATURE_ORDER + ["traffic_load"]
-    full = full[keep]
+    if verbose:
+        print(f"[INFO] Loaded experiments: {used}/{len(exp_dirs)} (skipped={skipped})")
+        print(f"[INFO] Final rows: {len(full)} ; columns: {list(full.columns)}")
 
     return full
 
@@ -266,7 +330,7 @@ def prepare_dataset(
 ) -> Tuple[np.ndarray, np.ndarray, StandardScaler, StandardScaler, list[str]]:
     df = pd.read_csv(csv_path)
 
-    # Make sure required columns exist even if some experiments lack KPIs
+    # Ensure required columns exist
     for col in FEATURE_ORDER + ["traffic_load"]:
         if col not in df.columns:
             df[col] = 0.0
