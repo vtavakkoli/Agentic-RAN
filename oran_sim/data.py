@@ -223,11 +223,13 @@ def load_timeseries_from_kpm(
     """
     Build consolidated timeseries from the O-RAN KPM dataset folder.
 
-    Output:
-      - time (numeric)
-      - columns in FEATURE_ORDER
-      - traffic_load (from enb dl_brate)
+    Progress output (when verbose=True):
+      - experiments processed / total
+      - rows accumulated
+      - ETA estimate
     """
+    import time as _time
+
     root = Path(root_dir)
     exp_dirs = sorted(root.glob("cluster_*/slicing_*/scheduling_*/RESERVATION-*"))
 
@@ -237,19 +239,47 @@ def load_timeseries_from_kpm(
             f"Expected: cluster_*/slicing_*/scheduling_*/RESERVATION-*"
         )
 
+    total = len(exp_dirs)
     out_frames: List[pd.DataFrame] = []
     skipped = 0
     used = 0
+    rows_so_far = 0
 
-    for exp in exp_dirs:
+    t0 = _time.time()
+    last_print = t0
+
+    def _print_progress(i: int) -> None:
+        nonlocal last_print
+        if not verbose:
+            return
+        now = _time.time()
+        # throttle prints to ~2x/sec max
+        if now - last_print < 0.5 and i < total:
+            return
+        last_print = now
+
+        elapsed = now - t0
+        done = i
+        rate = elapsed / done if done > 0 else 0.0
+        eta = rate * (total - done) if done > 0 else 0.0
+
+        pct = (done / total) * 100.0
+        print(
+            f"[PROGRESS] {done}/{total} experiments ({pct:5.1f}%) | "
+            f"rows={rows_so_far} | elapsed={elapsed:6.1f}s | ETA≈{eta:6.1f}s"
+        )
+
+    for i, exp in enumerate(exp_dirs, start=1):
         enb_path = exp / "bs" / "enb_metrics.csv"
         if not enb_path.exists():
             skipped += 1
+            _print_progress(i)
             continue
 
         enb = _read_enb_metrics(enb_path, verbose=verbose)
         if enb.empty:
             skipped += 1
+            _print_progress(i)
             continue
 
         ue_files = sorted(exp.glob("ue_*/ue_metrics.csv"))
@@ -268,16 +298,15 @@ def load_timeseries_from_kpm(
         if "nof_ue" in df.columns:
             df["ue_count"] = pd.to_numeric(df["nof_ue"], errors="coerce")
         else:
-            # fallback: number of UE folders (constant for this experiment)
             df["ue_count"] = float(len([p for p in exp.glob("ue_*") if p.is_dir()]))
 
-        # Ensure columns exist
+        # Ensure required columns exist
         for col in FEATURE_ORDER + ["traffic_load"]:
             if col not in df.columns:
                 df[col] = 0.0
 
         # Force numeric
-        for col in FEATURE_ORDER + ["traffic_load", "time"]:
+        for col in ["time"] + FEATURE_ORDER + ["traffic_load"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -288,11 +317,21 @@ def load_timeseries_from_kpm(
 
         out_frames.append(df)
         used += 1
+        rows_so_far += len(df)
+
+        # Stop early if we already collected enough rows
+        if n_steps is not None and n_steps > 0 and rows_so_far >= n_steps:
+            _print_progress(i)
+            if verbose:
+                print(f"[INFO] Reached requested n_steps={n_steps} (rows_so_far={rows_so_far}). Stopping early.")
+            break
+
+        _print_progress(i)
 
     if not out_frames:
         raise RuntimeError(
             f"Found experiments under {root}, but none produced usable tables. "
-            f"Skipped={skipped}, Total={len(exp_dirs)}"
+            f"Skipped={skipped}, Total={total}"
         )
 
     full = pd.concat(out_frames, axis=0, ignore_index=True)
@@ -300,13 +339,14 @@ def load_timeseries_from_kpm(
     # Sort by time across concatenated experiments (simple approach)
     full = full.sort_values("time").reset_index(drop=True)
 
-    # Truncate if requested
+    # Truncate if requested (exact)
     if n_steps is not None and n_steps > 0 and len(full) > n_steps:
         full = full.iloc[:n_steps].copy()
 
     if verbose:
-        print(f"[INFO] Loaded experiments: {used}/{len(exp_dirs)} (skipped={skipped})")
-        print(f"[INFO] Final rows: {len(full)} ; columns: {list(full.columns)}")
+        elapsed = _time.time() - t0
+        print(f"[DONE] Loaded experiments: {used}/{total} (skipped={skipped})")
+        print(f"[DONE] Final rows: {len(full)} ; elapsed={elapsed:.1f}s")
 
     return full
 
