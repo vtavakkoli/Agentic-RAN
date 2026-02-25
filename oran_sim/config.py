@@ -3,55 +3,67 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
-from oran_sim.seed import SEED
+# oran_sim/config.py
 
+# oran_sim/config.py
 FEATURE_ORDER = [
-    "dl_cqi",
-    "ul_sinr",
-    "sum_granted_prbs",
-    "sum_requested_prbs",
-    "dl_buffer_bytes",
-    "ul_buffer_bytes",
-    "num_ues",
+    # UE radio/link quality (core)
+    "rsrp",
+    "dl_snr",
+    "pl",
+    "cfo",
+    "ul_ta",
+    # MCS / reliability (PHY/MAC)
     "dl_mcs",
     "ul_mcs",
-    "tx_errors_dl_pct",
-    "rx_errors_ul_pct",
-    "slicing_enabled",
-    "slice_id",
-    "slice_prb",
-    "scheduling_policy",
-    "latency_ms",
-    "jitter_ms",
-    "payload_bytes",
+    "dl_bler",
+    "ul_bler",
+    # Throughput / buffer (MAC)
+    "dl_brate_ue",
+    "ul_brate_ue",
+    "ul_buff",
+    # RF indicators
+    "rf_o",
+    "rf_u",
+    "rf_l",
+    # Context
+    "ue_count",
 ]
-
-
-DEFAULT_FEATURE_COUNT = len(FEATURE_ORDER)
-
-
-def get_feature_columns(feature_count: int) -> list[str]:
-    if feature_count <= 0:
-        raise ValueError("feature_count must be > 0")
-    if feature_count > len(FEATURE_ORDER):
-        raise ValueError(f"feature_count={feature_count} exceeds available features ({len(FEATURE_ORDER)})")
-    return FEATURE_ORDER[:feature_count]
 
 
 @dataclass(frozen=True)
 class Scenario:
     name: str
-    model: str
-    feature_count: int
+    kind: str
+    features: int
+    hidden_sizes: List[int] | None = None
+    d_model: int | None = None
+    nhead: int | None = None
+    num_layers: int | None = None
+    dim_feedforward: int | None = None
+    dropout: float | None = None
+    hidden_size: int | None = None
+    dt: float | None = None
 
 
 SCENARIOS: Dict[str, Scenario] = {
-    f"scenario_{idx}": Scenario(
-        name=f"scenario_{idx}",
-        model="ridge" if idx <= 4 else "hgb",
-        feature_count=min(6 + idx, len(FEATURE_ORDER)),
-    )
-    for idx in range(1, 9)
+    "lightweight-32": Scenario("lightweight-32", "lstm", 6, hidden_sizes=[32]),
+    "lightweight-64": Scenario("lightweight-64", "lstm", 6, hidden_sizes=[64]),
+    "balanced-small": Scenario("balanced-small", "lstm", 8, hidden_sizes=[64, 32]),
+    "balanced-medium": Scenario("balanced-medium", "lstm", 8, hidden_sizes=[100, 50]),
+    "deep-performance": Scenario("deep-performance", "lstm", 10, hidden_sizes=[128, 100, 64]),
+    "ultra-performance": Scenario("ultra-performance", "lstm", 16, hidden_sizes=[512, 256, 128]),
+    "attention-baseline": Scenario(
+        "attention-baseline",
+        "attention",
+        8,
+        d_model=64,
+        nhead=4,
+        num_layers=2,
+        dim_feedforward=128,
+        dropout=0.1,
+    ),
+    "liquid-baseline": Scenario("liquid-baseline", "liquid", 6, hidden_size=64, dt=0.1),
 }
 
 

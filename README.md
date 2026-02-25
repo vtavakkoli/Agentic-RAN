@@ -1,56 +1,80 @@
-# Agentic-RAN: End-to-End KPM + Synthetic Time-Series Training
+# Agentic O-RAN NAS Traffic Prediction Simulation
 
-This repository now supports:
-- deterministic synthetic dataset generation,
-- robust KPM ingestion from `dataset-kpm/...`,
-- end-to-end train/predict/report pipelines,
-- and 8 concurrent Docker scenario runs writing to `results/<scenario>/`.
+A structurally extensible, Dockerized framework that simulates:
+- **Non-RT RIC / rApp NAS orchestration** (scenario definitions + complexity-aware model selection inputs)
+- **Near-RT RIC / xApp agentic inference** (training/inference + ReAct control loop)
 
-## Standard output contracts
-- `shared_data/traffic_data.csv` (synthetic dataset)
-- `results/model/` (single-run model artifacts)
-- `results/predictions/` (single-run predictions)
-- `results/final/report.html` (single-run report)
-- `results/<scenario_name>/...` (compose scenario outputs)
+## Project structure (extensible)
 
-## Deterministic seed
-Single source of truth: `oran_sim/seed.py` (`SEED=42`).
+```text
+.
+├── oran_sim/
+│   ├── config.py        # scenario catalog + feature order
+│   ├── data.py          # synthetic dataset generation + preprocessing
+│   ├── models.py        # LSTM/Attention/Liquid implementations + complexity math
+│   ├── training.py      # reusable training routine
+│   ├── agent.py         # ReAct loop (Thought/Action/Monitor)
+│   └── reporting.py     # markdown tables + chart generation
+├── generate_data.py     # entrypoint: create shared_data/traffic_data.csv
+├── xapp_agent.py        # entrypoint: run one scenario in one container
+├── evaluate_nas.py      # entrypoint: aggregate + rank + report
+├── docker-compose.yml   # 8 concurrent services (one per scenario)
+├── Dockerfile
+└── requirements.txt
+```
 
-## Smoke-test flow (no KPM required)
-### Bash (Linux/macOS)
+## Scenarios (8)
+1. `lightweight-32`
+2. `lightweight-64`
+3. `balanced-small`
+4. `balanced-medium`
+5. `deep-performance`
+6. `ultra-performance`
+7. `attention-baseline`
+8. `liquid-baseline`
+
+## Math implemented
+
+- **Exact LSTM layer complexity**:
+  \[
+  C_{LSTM}=4\times(d_xd_h+d_h^2+d_h)
+  \]
+- Stacked LSTM total = sum of layer-wise complexities.
+- Attention/Liquid use generalized complexity proxies for cross-architecture comparison.
+- NAS efficiency:
+  \[
+  C_{norm}=\frac{C_{model}}{\max(C_{model})}, \quad E=\frac{C_{norm}}{P_{norm}}
+  \]
+  where `P_norm` is derived from normalized `R^2`.
+
+## Run
+
+### 1) Generate data or read from data-kpm
 ```bash
 python generate_data.py --steps 5000 --output shared_data/traffic_data.csv
-python -m scripts.train --data_root shared_data/traffic_data.csv --out_dir results/model --seq_len 32 --feature_count 12 --model ridge
-python -m scripts.predict --model_dir results/model --input shared_data/traffic_data.csv --output results/predictions/preds.csv
-python -m scripts.report --metrics results/model/metrics.json --preds results/predictions/preds.csv --out results/final/report.html
+```
+```bash
+python generate_data.py --step 10000 --input shared_data/dataset-kpm --output shared_data/traffic_data.csv
+```
+
+### 2) Launch all 8 scenario containers concurrently
+```bash
 docker compose up --build
 ```
 
-### PowerShell (Windows)
-```powershell
-python generate_data.py --steps 5000 --output shared_data/traffic_data.csv
-python -m scripts.train --data_root shared_data/traffic_data.csv --out_dir results/model --seq_len 32 --feature_count 12 --model ridge
-python -m scripts.predict --model_dir results/model --input shared_data/traffic_data.csv --output results/predictions/preds.csv
-python -m scripts.report --metrics results/model/metrics.json --preds results/predictions/preds.csv --out results/final/report.html
-docker compose up --build
-```
+Each service reads `shared_data/traffic_data.csv` and appends its metrics to `shared_data/results.csv`.
 
-## KPM data usage
+### 3) Build NAS report (tables + charts)
 ```bash
-python -m scripts.train --data_root dataset-kpm --out_dir results/model --seq_len 32 --feature_count 12 --model hgb
-python -m scripts.predict --model_dir results/model --input dataset-kpm --output results/predictions/preds.csv
+python evaluate_nas.py \
+  --input shared_data/results.csv \
+  --output shared_data/nas_efficiency.csv \
+  --report shared_data/nas_report.md \
+  --chart_dir shared_data/charts
 ```
 
-## Docker scenarios
-`docker compose up --build` launches exactly 8 services concurrently:
-- `scenario_1` ... `scenario_8`
-
-Each scenario logs started/finished markers to stdout and writes artifacts under:
-- `results/scenario_i/model/`
-- `results/scenario_i/predictions/`
-- `results/scenario_i/final/report.html`
-
-## Tests
-```bash
-python -m unittest discover -s tests -v
-```
+Generated outputs:
+- `shared_data/nas_efficiency.csv`
+- `shared_data/nas_report.md` (comparison tables)
+- `shared_data/charts/r2_vs_complexity.png`
+- `shared_data/charts/efficiency_ranking.png`
