@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY . /app
+# Copy only runtime source files needed by the container entrypoint.
+COPY xapp_agent.py /app/xapp_agent.py
+COPY oran_sim /app/oran_sim
 
 CMD ["python", "xapp_agent.py", "--model_type", "lightweight-32"]
