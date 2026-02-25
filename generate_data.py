@@ -74,7 +74,8 @@ def main() -> None:
     parser.add_argument("--horizon_steps", type=int, default=1)
     args = parser.parse_args()
 
-    base = load_timeseries_from_kpm(args.input, verbose=True)
+    required_rows = args.steps + max(1, int(args.horizon_steps))
+    base = load_timeseries_from_kpm(args.input, n_steps=required_rows, verbose=True)
     base = _build_target(base, args.target, args.horizon_steps)
 
     keep_cols = ["time_ms", "reservation", "traffic_load"] + FEATURE_ORDER + ["target"]
