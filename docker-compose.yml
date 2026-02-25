@@ -5,36 +5,38 @@ x-common: &common
   image: agentic-ran:latest
   volumes:
     - ./shared_data:/app/shared_data
+    - ./results:/app/results
+  restart: "no"
 
 services:
-  lightweight-32:
+  scenario_1:
     <<: *common
-    command: python xapp_agent.py --model_type lightweight-32 --features 6 --epochs 8
+    command: python -m scripts.run_scenario --scenario scenario_1 --data shared_data/traffic_data.csv
 
-  lightweight-64:
+  scenario_2:
     <<: *common
-    command: python xapp_agent.py --model_type lightweight-64 --features 6 --epochs 8
+    command: python -m scripts.run_scenario --scenario scenario_2 --data shared_data/traffic_data.csv
 
-  balanced-small:
+  scenario_3:
     <<: *common
-    command: python xapp_agent.py --model_type balanced-small --features 8 --epochs 8
+    command: python -m scripts.run_scenario --scenario scenario_3 --data shared_data/traffic_data.csv
 
-  balanced-medium:
+  scenario_4:
     <<: *common
-    command: python xapp_agent.py --model_type balanced-medium --features 8 --epochs 8
+    command: python -m scripts.run_scenario --scenario scenario_4 --data shared_data/traffic_data.csv
 
-  deep-performance:
+  scenario_5:
     <<: *common
-    command: python xapp_agent.py --model_type deep-performance --features 10 --epochs 8
+    command: python -m scripts.run_scenario --scenario scenario_5 --data shared_data/traffic_data.csv
 
-  ultra-performance:
+  scenario_6:
     <<: *common
-    command: python xapp_agent.py --model_type ultra-performance --features 16 --epochs 8
+    command: python -m scripts.run_scenario --scenario scenario_6 --data shared_data/traffic_data.csv
 
-  attention-baseline:
+  scenario_7:
     <<: *common
-    command: python xapp_agent.py --model_type attention-baseline --features 8 --epochs 8
+    command: python -m scripts.run_scenario --scenario scenario_7 --data shared_data/traffic_data.csv
 
-  liquid-baseline:
+  scenario_8:
     <<: *common
-    command: python xapp_agent.py --model_type liquid-baseline --features 6 --epochs 8
+    command: python -m scripts.run_scenario --scenario scenario_8 --data shared_data/traffic_data.csv
