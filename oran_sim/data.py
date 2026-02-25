@@ -1,369 +1,243 @@
-# oran_sim/data.py
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Tuple, List, Optional
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
-from pandas.errors import EmptyDataError
-from sklearn.preprocessing import StandardScaler
 
 from oran_sim.config import FEATURE_ORDER
 
 
-# ---------------------------
-# Synthetic generator (optional fallback)
-# ---------------------------
-
-def generate_timeseries(n_steps: int, seed: int = 42) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
-    traffic_load = np.clip(rng.normal(0.6, 0.1, n_steps), 0, 1.2)
-    return pd.DataFrame(
-        {"timestamp": pd.date_range("2024-01-01", periods=n_steps, freq="h"), "traffic_load": traffic_load}
-    )
+def normalize_column_name(name: str) -> str:
+    cleaned = name.strip().lower()
+    cleaned = cleaned.replace("%", "pct")
+    cleaned = cleaned.replace("[", "_").replace("]", "")
+    cleaned = cleaned.replace("(", "_").replace(")", "")
+    cleaned = re.sub(r"[^a-z0-9]+", "_", cleaned)
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned
 
 
-# ---------------------------
-# Real dataset loader (O-RAN KPM folder)
-# ---------------------------
+def _read_csv_robust(path: Path, prefer_sep: str | None = None) -> pd.DataFrame:
+    if not path.exists() or path.stat().st_size == 0:
+        return pd.DataFrame()
 
-_ENB_COLS = ["time", "nof_ue", "dl_brate", "ul_brate"]
+    options = [prefer_sep, ",", ";", "\\t", None]
+    for sep in options:
+        if sep is None:
+            df = pd.read_csv(path, sep=None, engine="python", on_bad_lines="skip")
+        else:
+            try:
+                df = pd.read_csv(path, sep=sep, on_bad_lines="skip")
+            except Exception:
+                continue
+        if df.shape[1] > 0:
+            df = df.loc[:, [str(c).strip() != "" and not str(c).startswith("Unnamed") for c in df.columns]]
+            df.columns = [normalize_column_name(str(c)) for c in df.columns]
+            return df
+    return pd.DataFrame()
 
-# Map UE CSV columns -> normalized feature names used in FEATURE_ORDER
-_UE_TO_FEATURE = {
-    "rsrp": "rsrp",
-    "dl_snr": "dl_snr",
-    "pl": "pl",
-    "cfo": "cfo",
-    "ul_ta": "ul_ta",
-    "dl_mcs": "dl_mcs",
-    "ul_mcs": "ul_mcs",
-    "dl_bler": "dl_bler",
-    "ul_bler": "ul_bler",
-    "dl_brate": "dl_brate_ue",
-    "ul_brate": "ul_brate_ue",
-    "ul_buff": "ul_buff",
-    "rf_o": "rf_o",
-    "rf_u": "rf_u",
-    "rf_l": "rf_l",
+
+COLUMN_ALIASES = {
+    "tx_brate_downlink_mbps": "tx_brate_dl_mbps",
+    "tx_brate_downlink": "tx_brate_dl_mbps",
+    "dl_brate": "tx_brate_dl_mbps",
+    "dl_brate_mbps": "tx_brate_dl_mbps",
+    "tx_brate_uplink_mbps": "tx_brate_ul_mbps",
+    "ul_brate": "tx_brate_ul_mbps",
+    "nof_ue": "num_ues",
+    "ue_count": "num_ues",
+    "dl_buffer_bytes": "dl_buffer_bytes",
+    "dl_buffer": "dl_buffer_bytes",
+    "ul_buffer": "ul_buffer_bytes",
+    "ul_buff": "ul_buffer_bytes",
+    "sum_requested_prb": "sum_requested_prbs",
+    "sum_granted_prb": "sum_granted_prbs",
 }
 
 
-def _safe_empty_df(cols: List[str]) -> pd.DataFrame:
-    return pd.DataFrame(columns=cols)
+def _apply_aliases(df: pd.DataFrame) -> pd.DataFrame:
+    rename = {c: COLUMN_ALIASES[c] for c in df.columns if c in COLUMN_ALIASES}
+    return df.rename(columns=rename)
 
 
-def _read_csv_sniff(path: Path, *, prefer_sep: Optional[str] = None) -> pd.DataFrame:
-    """
-    Robust CSV reader:
-    - skips empty files
-    - tries preferred separator first (if provided)
-    - then uses sep=None (python engine) to sniff
-    """
-    if path.stat().st_size == 0:
-        raise EmptyDataError("empty file")
-
-    if prefer_sep is not None:
-        try:
-            return pd.read_csv(path, sep=prefer_sep)
-        except Exception:
-            pass
-
-    # Sniff separator (handles BOM, weird formatting)
-    return pd.read_csv(path, sep=None, engine="python")
+def _coalesce_col(df: pd.DataFrame, target: str, candidates: Iterable[str], default: float = 0.0) -> pd.Series:
+    for c in candidates:
+        if c in df.columns:
+            return pd.to_numeric(df[c], errors="coerce")
+    return pd.Series(default, index=df.index, dtype=float)
 
 
-def _read_enb_metrics(path: Path, verbose: bool = False) -> pd.DataFrame:
-    try:
-        df = _read_csv_sniff(path, prefer_sep=",")
-    except EmptyDataError:
-        if verbose:
-            print(f"[WARN] Empty enb_metrics.csv: {path}")
-        return _safe_empty_df(_ENB_COLS)
-    except Exception as e:
-        if verbose:
-            print(f"[WARN] Failed reading enb_metrics.csv: {path} ({e})")
-        return _safe_empty_df(_ENB_COLS)
-
-    if df.empty:
-        return _safe_empty_df(_ENB_COLS)
-
-    df.columns = [c.strip() for c in df.columns]
-    if "time" not in df.columns or "dl_brate" not in df.columns:
-        if verbose:
-            print(f"[WARN] enb_metrics.csv missing required cols in {path}. cols={list(df.columns)}")
-        return _safe_empty_df(_ENB_COLS)
-
-    keep = [c for c in _ENB_COLS if c in df.columns]
-    df = df[keep].copy()
-
-    df["time"] = pd.to_numeric(df["time"], errors="coerce")
-    df["dl_brate"] = pd.to_numeric(df["dl_brate"], errors="coerce")
-    if "nof_ue" in df.columns:
-        df["nof_ue"] = pd.to_numeric(df["nof_ue"], errors="coerce")
-    if "ul_brate" in df.columns:
-        df["ul_brate"] = pd.to_numeric(df["ul_brate"], errors="coerce")
-
-    df = df.dropna(subset=["time"]).sort_values("time")
-    return df
-
-
-def _read_ue_metrics(path: Path, verbose: bool = False) -> pd.DataFrame:
-    """
-    UE metrics CSV has RELATIVE time from experiment start (ms):
-      time;cc;pci;...
-    """
-    try:
-        df = _read_csv_sniff(path, prefer_sep=";")
-    except EmptyDataError:
-        if verbose:
-            print(f"[WARN] Empty ue_metrics.csv: {path}")
-        return _safe_empty_df(["time"])
-    except Exception as e:
-        if verbose:
-            print(f"[WARN] Failed reading ue_metrics.csv: {path} ({e})")
-        return _safe_empty_df(["time"])
-
-    if df.empty:
-        return _safe_empty_df(["time"])
-
-    df.columns = [c.strip() for c in df.columns]
-    if "time" not in df.columns:
-        if verbose:
-            print(f"[WARN] ue_metrics.csv missing 'time' in {path}. cols={list(df.columns)}")
-        return _safe_empty_df(["time"])
-
-    df["time"] = pd.to_numeric(df["time"], errors="coerce")
-    df = df.dropna(subset=["time"]).sort_values("time")
-    return df
-
-
-def _aggregate_ues(
-    ue_metric_files: List[Path],
-    start_time_ms: float,
-    verbose: bool = False
-) -> Tuple[pd.DataFrame, int, int]:
-    """
-    UE time is RELATIVE ms → convert to absolute:
-      time_abs = start_time_ms + time
-
-    Returns:
-      - dataframe with 'time_abs' + aggregated features (mean across UEs)
-      - total UE rows read
-      - unique time_abs count
-    """
-    frames: List[pd.DataFrame] = []
-    total_rows = 0
-
-    for f in ue_metric_files:
-        u = _read_ue_metrics(f, verbose=verbose)
-        if u.empty:
+def _load_flow_features(exp_dir: Path) -> pd.DataFrame:
+    flow_files = sorted(exp_dir.glob("**/*flow*.csv")) + sorted(exp_dir.glob("**/*flows*.csv"))
+    frames: list[pd.DataFrame] = []
+    for flow_file in flow_files:
+        fdf = _apply_aliases(_read_csv_robust(flow_file))
+        if fdf.empty:
             continue
-
-        available_src = [c for c in _UE_TO_FEATURE.keys() if c in u.columns]
-        if not available_src:
+        time_col = "time_ms" if "time_ms" in fdf.columns else ("time" if "time" in fdf.columns else None)
+        if time_col is None:
             continue
-
-        sub = u[["time"] + available_src].copy()
-        for c in available_src:
-            sub[c] = pd.to_numeric(sub[c], errors="coerce")
-
-        sub["time_abs"] = start_time_ms + sub["time"]
-        sub = sub.drop(columns=["time"])
-
-        total_rows += len(sub)
-        frames.append(sub)
+        payload = _coalesce_col(fdf, "payload_bytes", ["payload_bytes", "bytes", "pkt_size_bytes"], default=0.0)
+        latency = _coalesce_col(fdf, "latency_ms", ["latency_ms", "delay_ms", "rtt_ms"], default=0.0)
+        chunk = pd.DataFrame(
+            {
+                "time_ms": pd.to_numeric(fdf[time_col], errors="coerce"),
+                "latency_ms": latency,
+                "payload_bytes": payload,
+            }
+        ).dropna(subset=["time_ms"])
+        chunk = chunk.sort_values("time_ms")
+        chunk["jitter_ms"] = chunk["latency_ms"].diff().abs().fillna(0.0)
+        frames.append(chunk[["time_ms", "latency_ms", "jitter_ms", "payload_bytes"]])
 
     if not frames:
-        return _safe_empty_df(["time_abs"]), 0, 0
+        return pd.DataFrame(columns=["time_ms", "latency_ms", "jitter_ms", "payload_bytes"])
 
-    all_ue = pd.concat(frames, axis=0, ignore_index=True)
-
-    # Mean across UEs per absolute time
-    agg = all_ue.groupby("time_abs", as_index=False).mean(numeric_only=True)
-
-    rename = {src: dst for src, dst in _UE_TO_FEATURE.items() if src in agg.columns}
-    agg = agg.rename(columns=rename)
-
-    return agg, total_rows, len(agg)
+    merged = pd.concat(frames, ignore_index=True)
+    return merged.groupby("time_ms", as_index=False).mean(numeric_only=True)
 
 
-def load_timeseries_from_kpm(
-    root_dir: str | Path,
-    n_steps: Optional[int] = None,
-    verbose: bool = True,
-) -> pd.DataFrame:
-    """
-    Build traffic_data.csv rows from dataset-kpm folder.
-
-    - ENB time: absolute epoch ms
-    - UE time: relative ms -> convert to absolute using ENB start time
-    - Merge by nearest timestamp (merge_asof) with tolerance.
-    - Stops early when n_steps is reached.
-    """
+def load_timeseries_from_kpm(root_dir: str | Path, n_steps: int | None = None, verbose: bool = True) -> pd.DataFrame:
     root = Path(root_dir)
-    exp_dirs = sorted(root.glob("**/cluster_*/slicing_*/scheduling_*/RESERVATION-*"))
+    reservations = sorted(root.glob("**/RESERVATION-*"))
+    if not reservations:
+        raise FileNotFoundError(f"No RESERVATION-* folders found under {root}")
 
-    if verbose:
-        print(f"[INFO] Input root: {root.resolve()}")
-        print(f"[INFO] Found {len(exp_dirs)} experiment dirs (RESERVATION-*)")
+    all_frames: list[pd.DataFrame] = []
+    for res in reservations:
+        bs_metrics = sorted(res.glob("bs/*_metrics.csv")) + sorted(res.glob("bs/enb_metrics.csv"))
+        bs_frames: list[pd.DataFrame] = []
+        for m in bs_metrics:
+            bdf = _apply_aliases(_read_csv_robust(m, prefer_sep=","))
+            if bdf.empty:
+                continue
+            time_col = "time_ms" if "time_ms" in bdf.columns else ("time" if "time" in bdf.columns else None)
+            if time_col is None:
+                continue
+            bdf["time_ms"] = pd.to_numeric(bdf[time_col], errors="coerce")
+            bs_frames.append(bdf.dropna(subset=["time_ms"]))
 
-    if not exp_dirs:
-        raise FileNotFoundError(
-            f"No RESERVATION-* dirs found under {root}. "
-            f"Expected pattern: **/cluster_*/slicing_*/scheduling_*/RESERVATION-*"
-        )
-
-    out_frames: List[pd.DataFrame] = []
-    used = 0
-    skipped = 0
-    total_rows = 0
-
-    for i, exp in enumerate(exp_dirs, start=1):
-        if n_steps is not None and n_steps > 0 and total_rows >= n_steps:
+        if not bs_frames:
             if verbose:
-                print(f"[INFO] Reached requested n_steps={n_steps}. Stopping early.")
-            break
-
-        enb_path = exp / "bs" / "enb_metrics.csv"
-        if not enb_path.exists():
-            skipped += 1
-            if verbose:
-                print(f"[SKIP] {i}/{len(exp_dirs)} no enb_metrics.csv: {exp}")
+                print(f"[WARN] skipping {res}: no bs metrics")
             continue
 
-        enb = _read_enb_metrics(enb_path, verbose=verbose)
-        if enb.empty:
-            skipped += 1
-            if verbose:
-                print(f"[SKIP] {i}/{len(exp_dirs)} enb empty/unreadable: {enb_path}")
-            continue
+        bs_df = pd.concat(bs_frames, ignore_index=True)
+        bs_df = bs_df.groupby("time_ms", as_index=False).mean(numeric_only=True)
+        bs_df["time_ms"] = pd.to_numeric(bs_df["time_ms"], errors="coerce").astype(float)
+        bs_df = bs_df.sort_values("time_ms")
 
-        enb = enb.sort_values("time")
-        start_time_ms = float(enb["time"].iloc[0])
+        ue_files = sorted(res.glob("ue_*/ue_metrics.csv"))
+        ue_chunks: list[pd.DataFrame] = []
+        start_time = float(bs_df["time_ms"].min())
+        for ue in ue_files:
+            udf = _apply_aliases(_read_csv_robust(ue, prefer_sep=";"))
+            if udf.empty:
+                continue
+            rel_col = "time" if "time" in udf.columns else ("time_ms" if "time_ms" in udf.columns else None)
+            if rel_col is None:
+                continue
+            udf["time_ms"] = start_time + pd.to_numeric(udf[rel_col], errors="coerce")
+            keep = [c for c in FEATURE_ORDER if c in udf.columns]
+            ue_chunks.append(udf[["time_ms"] + keep])
 
-        ue_files = sorted(exp.glob("ue_*/ue_metrics.csv"))
-        ue_agg, ue_total_rows, ue_unique_times = _aggregate_ues(
-            ue_files, start_time_ms=start_time_ms, verbose=verbose
-        )
-
-        # Merge ENB (absolute time) with UE (absolute time_abs) by nearest within tolerance
-        if not ue_agg.empty and "time_abs" in ue_agg.columns:
-            ue_agg = ue_agg.sort_values("time_abs")
-
-            df = pd.merge_asof(
-                enb.sort_values("time"),
-                ue_agg.sort_values("time_abs"),
-                left_on="time",
-                right_on="time_abs",
+        if ue_chunks:
+            ue_df = pd.concat(ue_chunks, ignore_index=True)
+            ue_df = ue_df.groupby("time_ms", as_index=False).mean(numeric_only=True)
+            ue_df["time_ms"] = pd.to_numeric(ue_df["time_ms"], errors="coerce").astype(float)
+            merged = pd.merge_asof(
+                bs_df.sort_values("time_ms"),
+                ue_df.sort_values("time_ms"),
+                on="time_ms",
                 direction="nearest",
-                tolerance=200.0,  # ms (ENB sampling ~250ms)
+                tolerance=200,
             )
-            df = df.drop(columns=["time_abs"], errors="ignore")
         else:
-            df = enb.copy()
+            merged = bs_df
 
-        # Target and context
-        df["traffic_load"] = pd.to_numeric(df["dl_brate"], errors="coerce")
-        df["ue_count"] = pd.to_numeric(df.get("nof_ue", 0), errors="coerce")
-
-        # Ensure required columns exist
-        for col in FEATURE_ORDER + ["traffic_load"]:
-            if col not in df.columns:
-                df[col] = 0.0
-
-        # Numeric cleanup
-        for col in ["time"] + FEATURE_ORDER + ["traffic_load"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        df = df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-        df = df[["time"] + FEATURE_ORDER + ["traffic_load"]].copy()
-
-        # Trim to remaining n_steps
-        if n_steps is not None and n_steps > 0:
-            remaining = n_steps - total_rows
-            if remaining <= 0:
-                break
-            if len(df) > remaining:
-                df = df.iloc[:remaining].copy()
-
-        out_frames.append(df)
-        used += 1
-        total_rows += len(df)
-
-        if verbose:
-            print(
-                f"[OK] {i}/{len(exp_dirs)} {exp} | "
-                f"enb_rows={len(enb)} | ue_files={len(ue_files)} | "
-                f"ue_rows_read={ue_total_rows} | ue_agg_times={ue_unique_times} | "
-                f"merged_rows={len(df)} | total_rows={total_rows} | "
-                f"enb_start={int(start_time_ms)}"
+        flow_df = _load_flow_features(res)
+        if not flow_df.empty:
+            flow_df["time_ms"] = pd.to_numeric(flow_df["time_ms"], errors="coerce").astype(float)
+            merged = pd.merge_asof(
+                merged.sort_values("time_ms"),
+                flow_df.sort_values("time_ms"),
+                on="time_ms",
+                direction="nearest",
+                tolerance=200,
             )
 
-        if n_steps is not None and n_steps > 0 and total_rows >= n_steps:
-            if verbose:
-                print(f"[INFO] Reached requested n_steps={n_steps}. Stopping early.")
-            break
-
-    if not out_frames:
-        raise RuntimeError(
-            f"Nothing loaded. Experiments found={len(exp_dirs)} but all skipped. "
-            f"Check folder structure and whether enb_metrics.csv files are non-empty."
+        # Core feature synthesis
+        merged["num_ues"] = _coalesce_col(merged, "num_ues", ["num_ues"], default=0.0)
+        merged["sum_requested_prbs"] = _coalesce_col(
+            merged, "sum_requested_prbs", ["sum_requested_prbs", "dl_requested_prbs"], default=0.0
         )
+        merged["sum_granted_prbs"] = _coalesce_col(
+            merged, "sum_granted_prbs", ["sum_granted_prbs", "dl_granted_prbs"], default=0.0
+        )
+        merged["dl_buffer_bytes"] = _coalesce_col(merged, "dl_buffer_bytes", ["dl_buffer_bytes"], default=0.0)
+        merged["ul_buffer_bytes"] = _coalesce_col(merged, "ul_buffer_bytes", ["ul_buffer_bytes"], default=0.0)
+        merged["tx_errors_dl_pct"] = _coalesce_col(merged, "tx_errors_dl_pct", ["tx_errors_dl_pct", "dl_bler"], default=0.0)
+        merged["rx_errors_ul_pct"] = _coalesce_col(merged, "rx_errors_ul_pct", ["rx_errors_ul_pct", "ul_bler"], default=0.0)
+        merged["dl_mcs"] = _coalesce_col(merged, "dl_mcs", ["dl_mcs"], default=0.0)
+        merged["ul_mcs"] = _coalesce_col(merged, "ul_mcs", ["ul_mcs"], default=0.0)
+        merged["dl_cqi"] = _coalesce_col(merged, "dl_cqi", ["dl_cqi", "cqi"], default=0.0)
+        merged["ul_sinr"] = _coalesce_col(merged, "ul_sinr", ["ul_sinr", "ul_snr"], default=0.0)
+        merged["ul_rssi"] = _coalesce_col(merged, "ul_rssi", ["ul_rssi", "rssi"], default=-95.0)
 
-    full = pd.concat(out_frames, axis=0, ignore_index=True)
-    full = full.sort_values("time").reset_index(drop=True)
+        if "slicing" in str(res).lower() or "slice" in str(res).lower():
+            merged["slicing_enabled"] = 1.0
+        else:
+            merged["slicing_enabled"] = 0.0
+        merged["slice_id"] = float(int(re.search(r"slice[_-]?(\d+)", str(res).lower()).group(1)) if re.search(r"slice[_-]?(\d+)", str(res).lower()) else 0)
+        merged["slice_prb"] = _coalesce_col(merged, "slice_prb", ["slice_prb"], default=50.0)
+        merged["scheduling_policy"] = 1.0 if "rr" in str(res).lower() else 0.0
 
-    if n_steps is not None and n_steps > 0 and len(full) > n_steps:
+        merged["latency_ms"] = _coalesce_col(merged, "latency_ms", ["latency_ms"], default=0.0)
+        merged["jitter_ms"] = _coalesce_col(merged, "jitter_ms", ["jitter_ms"], default=0.0)
+        merged["payload_bytes"] = _coalesce_col(merged, "payload_bytes", ["payload_bytes"], default=0.0)
+
+        traffic_primary = _coalesce_col(merged, "traffic_load", ["tx_brate_dl_mbps"])
+        traffic_fallback = _coalesce_col(merged, "traffic_load", ["dl_brate", "dl_brate_mbps"])
+        merged["traffic_load"] = traffic_primary.where(traffic_primary > 0, traffic_fallback)
+
+        for col in FEATURE_ORDER + ["ul_rssi", "traffic_load"]:
+            if col not in merged.columns:
+                merged[col] = 0.0
+
+        merged = merged[["time_ms", "traffic_load", "ul_rssi"] + FEATURE_ORDER].copy()
+        merged = merged.sort_values("time_ms")
+        merged[FEATURE_ORDER + ["ul_rssi", "traffic_load"]] = merged[FEATURE_ORDER + ["ul_rssi", "traffic_load"]].ffill().fillna(0.0)
+        merged["time_ms"] = merged["time_ms"].astype("int64")
+        for col in ["traffic_load", "ul_rssi"] + FEATURE_ORDER:
+            merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0.0).astype("float32")
+
+        all_frames.append(merged)
+
+    if not all_frames:
+        raise RuntimeError("No valid reservations could be parsed from KPM dataset")
+
+    full = pd.concat(all_frames, ignore_index=True).sort_values("time_ms").reset_index(drop=True)
+    if n_steps is not None:
         full = full.iloc[:n_steps].copy()
-
-    if verbose:
-        print(f"[INFO] Loaded experiments used={used}, skipped={skipped}, total_rows={len(full)}")
-        print(f"[INFO] Final columns: {list(full.columns)}")
-
     return full
 
 
-# ---------------------------
-# Training prep
-# ---------------------------
-
-def build_sequences(features: np.ndarray, target: np.ndarray, seq_len: int) -> Tuple[np.ndarray, np.ndarray]:
-    x, y = [], []
-    for i in range(seq_len, len(features)):
-        x.append(features[i - seq_len : i])
-        y.append(target[i])
-    return np.asarray(x, dtype=np.float32), np.asarray(y, dtype=np.float32)
-
-
-def prepare_dataset(
-    csv_path: str,
-    feature_count: int,
-    seq_len: int,
-) -> Tuple[np.ndarray, np.ndarray, StandardScaler, StandardScaler, list[str]]:
-    df = pd.read_csv(csv_path)
-
-    # Ensure required columns exist
-    for col in FEATURE_ORDER + ["traffic_load"]:
-        if col not in df.columns:
-            df[col] = 0.0
-
-    df = df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-
-    selected_features = FEATURE_ORDER[:feature_count]
-    x_raw = df[selected_features].values
-    y_raw = df["traffic_load"].values.astype(np.float32)
-
-    x_scaler, y_scaler = StandardScaler(), StandardScaler()
-    x_scaled = x_scaler.fit_transform(x_raw)
-    y_scaled = y_scaler.fit_transform(y_raw.reshape(-1, 1)).reshape(-1)
-
-    x_seq, y_seq = build_sequences(x_scaled, y_scaled, seq_len=seq_len)
-    return x_seq, y_seq, x_scaler, y_scaler, selected_features
+def split_by_time(df: pd.DataFrame, split: tuple[float, float, float] = (0.6, 0.3, 0.1)) -> pd.DataFrame:
+    if abs(sum(split) - 1.0) > 1e-8:
+        raise ValueError("split must sum to 1")
+    n = len(df)
+    n_train = int(n * split[0])
+    n_val = int(n * split[1])
+    labels = np.array(["train"] * n_train + ["val"] * n_val + ["test"] * (n - n_train - n_val), dtype=object)
+    out = df.copy()
+    out["split"] = labels
+    return out
 
 
-def save_dataframe(df: pd.DataFrame, output: str) -> Path:
+def save_dataframe(df: pd.DataFrame, output: str | Path) -> Path:
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out, index=False)
