@@ -5,36 +5,50 @@ x-common: &common
   image: agentic-ran:latest
   volumes:
     - ./shared_data:/app/shared_data
+    - ./results:/app/results
 
 services:
   lightweight-32:
     <<: *common
-    command: python xapp_agent.py --model_type lightweight-32 --features 6 --epochs 8
+    command: python -m scripts.run_scenario --scenario lightweight-32
 
   lightweight-64:
     <<: *common
-    command: python xapp_agent.py --model_type lightweight-64 --features 6 --epochs 8
+    command: python -m scripts.run_scenario --scenario lightweight-64
 
   balanced-small:
     <<: *common
-    command: python xapp_agent.py --model_type balanced-small --features 8 --epochs 8
+    command: python -m scripts.run_scenario --scenario balanced-small
 
   balanced-medium:
     <<: *common
-    command: python xapp_agent.py --model_type balanced-medium --features 8 --epochs 8
+    command: python -m scripts.run_scenario --scenario balanced-medium
 
   deep-performance:
     <<: *common
-    command: python xapp_agent.py --model_type deep-performance --features 10 --epochs 8
+    command: python -m scripts.run_scenario --scenario deep-performance
 
   ultra-performance:
     <<: *common
-    command: python xapp_agent.py --model_type ultra-performance --features 16 --epochs 8
+    command: python -m scripts.run_scenario --scenario ultra-performance
 
   attention-baseline:
     <<: *common
-    command: python xapp_agent.py --model_type attention-baseline --features 8 --epochs 8
+    command: python -m scripts.run_scenario --scenario attention-baseline
 
   liquid-baseline:
     <<: *common
-    command: python xapp_agent.py --model_type liquid-baseline --features 6 --epochs 8
+    command: python -m scripts.run_scenario --scenario liquid-baseline
+
+  aggregator:
+    <<: *common
+    command: python -m scripts.aggregate_report
+    depends_on:
+      - lightweight-32
+      - lightweight-64
+      - balanced-small
+      - balanced-medium
+      - deep-performance
+      - ultra-performance
+      - attention-baseline
+      - liquid-baseline
