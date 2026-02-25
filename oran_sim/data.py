@@ -45,6 +45,10 @@ _COL_ALIASES = {
     "rx_errors_ul": "rx_errors_ul_pct",
     "ul_buffer": "ul_buffer_bytes",
     "dl_buffer": "dl_buffer_bytes",
+    "timestamp": "time",
+    "tx_errors_downlink_pct": "tx_errors_dl_pct",
+    "rx_errors_uplink_pct": "rx_errors_ul_pct",
+    "tx_brate_downlink_mbps": "tx_brate_dl_mbps",
 }
 
 
@@ -71,7 +75,7 @@ def _read_csv(path: Path, prefer_sep: str = ",") -> pd.DataFrame:
 
 
 def _load_bs_metrics(exp_dir: Path) -> pd.DataFrame:
-    bs_files = sorted((exp_dir / "bs").glob("*_metrics.csv"))
+    bs_files = sorted(f for f in (exp_dir / "bs").glob("*_metrics.csv") if f.name != "enb_metrics.csv")
     frames: List[pd.DataFrame] = []
     for f in bs_files:
         df = _read_csv(f, prefer_sep=",")
@@ -100,6 +104,8 @@ def _load_bs_metrics(exp_dir: Path) -> pd.DataFrame:
 
 def _load_enb_metrics(exp_dir: Path) -> pd.DataFrame:
     path = exp_dir / "bs" / "enb_metrics.csv"
+    if not path.exists():
+        path = exp_dir / "enb_metrics.csv"
     if not path.exists():
         return pd.DataFrame(columns=["time_ms"])
     df = _read_csv(path, prefer_sep=",")

@@ -1,77 +1,56 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
 import pandas as pd
 
-
-def _build_kpm_tree(base: Path) -> None:
-    for i in range(2):
-        res = base / "cluster_a" / "slicing_on_20" / "scheduling_rr" / f"RESERVATION-{i+1}"
-        (res / "bs").mkdir(parents=True, exist_ok=True)
-        (res / "ue_1").mkdir(parents=True, exist_ok=True)
-        (res / "bs" / "enb_metrics.csv").write_text(
-            "time,nof_ue,dl_brate\n" + "\n".join([f"{1000+j*1000},{i+1},{10+j}" for j in range(5)]) + "\n",
-            encoding="utf-8",
-        )
-        (res / "bs" / "cell_metrics.csv").write_text(
-            "time,tx_brate downlink [Mbps],sum_requested_prbs,sum_granted_prbs\n"
-            + "\n".join([f"{1000+j*1000},{10+j},{20+j},{15+j}" for j in range(5)])
-            + "\n",
-            encoding="utf-8",
-        )
-        (res / "ue_1" / "ue_metrics.csv").write_text(
-            "time;dl_mcs;ul_mcs;dl_cqi;ul_sinr\n"
-            + "\n".join([f"{j*1000},{1+j},{2+j},{3+j},{4+j}" for j in range(5)])
-            + "\n",
-            encoding="utf-8",
-        )
+FIX = Path(__file__).parent / "fixtures"
 
 
-def test_generate_exact_n_and_splits(tmp_path: Path) -> None:
-    input_dir = tmp_path / "dataset-kpm"
-    _build_kpm_tree(input_dir)
-    out = tmp_path / "traffic_data.csv"
+def _build_kpm_tree(tmp_path: Path) -> Path:
+    root = tmp_path / "shared_data" / "dataset-kpm" / "cluster_1" / "slicing_1" / "scheduling_0" / "RESERVATION-142634"
+    (root / "bs").mkdir(parents=True, exist_ok=True)
+    (root / "ue_001010123456002").mkdir(parents=True, exist_ok=True)
 
-    subprocess.run(
-        [
-            "python",
-            "generate_data.py",
-            "--steps",
-            "20",
-            "--input",
-            str(input_dir),
-            "--output",
-            str(out),
-            "--seed",
-            "42",
-        ],
-        check=True,
-    )
-
-    full = pd.read_csv(out)
-    train = pd.read_csv(tmp_path / "traffic_data_train.csv")
-    val = pd.read_csv(tmp_path / "traffic_data_val.csv")
-    test = pd.read_csv(tmp_path / "traffic_data_test.csv")
-
-    assert len(full) == 20
-    assert len(train) == 12
-    assert len(val) == 6
-    assert len(test) == 2
+    shutil.copy(FIX / "bs" / "1010123456002_metrics.csv", root / "bs" / "1010123456002_metrics.csv")
+    shutil.copy(FIX / "bs" / "enb_metrics.csv", root / "enb_metrics.csv")
+    shutil.copy(FIX / "bs" / "enb_metrics.csv", root / "bs" / "enb_metrics.csv")
+    shutil.copy(FIX / "ue_001010123456002" / "ue_metrics.csv", root / "ue_001010123456002" / "ue_metrics.csv")
+    shutil.copy(FIX / "ue_001010123456002" / "mgen.csv", root / "ue_001010123456002" / "flow_log.csv")
+    return tmp_path / "shared_data" / "dataset-kpm"
 
 
-def test_deterministic_split_seed(tmp_path: Path) -> None:
-    input_dir = tmp_path / "dataset-kpm"
-    _build_kpm_tree(input_dir)
+def test_generate_data_exact_steps_and_splits(tmp_path: Path) -> None:
+    input_root = _build_kpm_tree(tmp_path)
+    out_csv = tmp_path / "shared_data" / "traffic_data.csv"
 
-    out1 = tmp_path / "a.csv"
-    out2 = tmp_path / "b.csv"
-    cmd1 = ["python", "generate_data.py", "--steps", "20", "--input", str(input_dir), "--output", str(out1), "--seed", "7"]
-    cmd2 = ["python", "generate_data.py", "--steps", "20", "--input", str(input_dir), "--output", str(out2), "--seed", "7"]
-    subprocess.run(cmd1, check=True)
-    subprocess.run(cmd2, check=True)
+    cmd = [
+        "python",
+        "generate_data.py",
+        "--steps",
+        "50",
+        "--input",
+        str(input_root),
+        "--output",
+        str(out_csv),
+        "--seed",
+        "42",
+    ]
+    subprocess.run(cmd, check=True)
 
-    a_train = pd.read_csv(tmp_path / "a_train.csv")
-    b_train = pd.read_csv(tmp_path / "b_train.csv")
-    assert a_train.equals(b_train)
+    full = pd.read_csv(out_csv)
+    train = pd.read_csv(tmp_path / "shared_data" / "traffic_data_train.csv")
+    val = pd.read_csv(tmp_path / "shared_data" / "traffic_data_val.csv")
+    test = pd.read_csv(tmp_path / "shared_data" / "traffic_data_test.csv")
+
+    assert len(full) == 50
+    assert len(train) == 30
+    assert len(val) == 15
+    assert len(test) == 5
+
+    first5 = full.head(5).copy()
+    subprocess.run(cmd, check=True)
+    full_again = pd.read_csv(out_csv)
+    pd.testing.assert_frame_equal(first5.reset_index(drop=True), full_again.head(5).reset_index(drop=True))

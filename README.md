@@ -72,3 +72,10 @@ results/
     report.html
     scenario_status.csv
 ```
+
+
+## Run tests
+```bash
+pip install -r requirements.txt
+pytest -q
+```
