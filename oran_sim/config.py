@@ -3,31 +3,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
-# oran_sim/config.py
-
-# oran_sim/config.py
 FEATURE_ORDER = [
-    # UE radio/link quality (core)
-    "rsrp",
-    "dl_snr",
-    "pl",
-    "cfo",
-    "ul_ta",
-    # MCS / reliability (PHY/MAC)
+    "dl_cqi",
+    "ul_sinr",
+    "sum_granted_prbs",
+    "sum_requested_prbs",
+    "dl_buffer_bytes",
+    "ul_buffer_bytes",
+    "num_ues",
     "dl_mcs",
     "ul_mcs",
-    "dl_bler",
-    "ul_bler",
-    # Throughput / buffer (MAC)
-    "dl_brate_ue",
-    "ul_brate_ue",
-    "ul_buff",
-    # RF indicators
-    "rf_o",
-    "rf_u",
-    "rf_l",
-    # Context
-    "ue_count",
+    "tx_errors_dl_pct",
+    "rx_errors_ul_pct",
+    "latency_ms",
+    "jitter_ms",
+    "payload_bytes",
+    "slicing_enabled",
+    "slice_id",
+    "slice_prb",
+    "scheduling_policy",
 ]
 
 
@@ -36,35 +30,27 @@ class Scenario:
     name: str
     kind: str
     features: int
-    hidden_sizes: List[int] | None = None
-    d_model: int | None = None
-    nhead: int | None = None
-    num_layers: int | None = None
-    dim_feedforward: int | None = None
-    dropout: float | None = None
-    hidden_size: int | None = None
-    dt: float | None = None
 
 
 SCENARIOS: Dict[str, Scenario] = {
-    "lightweight-32": Scenario("lightweight-32", "lstm", 6, hidden_sizes=[32]),
-    "lightweight-64": Scenario("lightweight-64", "lstm", 6, hidden_sizes=[64]),
-    "balanced-small": Scenario("balanced-small", "lstm", 8, hidden_sizes=[64, 32]),
-    "balanced-medium": Scenario("balanced-medium", "lstm", 8, hidden_sizes=[100, 50]),
-    "deep-performance": Scenario("deep-performance", "lstm", 10, hidden_sizes=[128, 100, 64]),
-    "ultra-performance": Scenario("ultra-performance", "lstm", 16, hidden_sizes=[512, 256, 128]),
-    "attention-baseline": Scenario(
-        "attention-baseline",
-        "attention",
-        8,
-        d_model=64,
-        nhead=4,
-        num_layers=2,
-        dim_feedforward=128,
-        dropout=0.1,
-    ),
-    "liquid-baseline": Scenario("liquid-baseline", "liquid", 6, hidden_size=64, dt=0.1),
+    "lightweight-32": Scenario("lightweight-32", "ridge", 10),
+    "lightweight-64": Scenario("lightweight-64", "ridge", 12),
+    "balanced-small": Scenario("balanced-small", "hgb", 14),
+    "balanced-medium": Scenario("balanced-medium", "hgb", 16),
+    "deep-performance": Scenario("deep-performance", "hgb", 18),
+    "ultra-performance": Scenario("ultra-performance", "hgb", 18),
+    "attention-baseline": Scenario("attention-baseline", "ridge", 15),
+    "liquid-baseline": Scenario("liquid-baseline", "ridge", 11),
 }
+
+
+def get_feature_columns(feature_count: int, include_categoricals: bool = True) -> List[str]:
+    if feature_count <= 0:
+        raise ValueError("feature_count must be > 0")
+    cols = FEATURE_ORDER[: min(feature_count, len(FEATURE_ORDER))]
+    if not include_categoricals:
+        cols = [c for c in cols if c != "scheduling_policy"]
+    return cols
 
 
 def supported_scenarios() -> List[str]:

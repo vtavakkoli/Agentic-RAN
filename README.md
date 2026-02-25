@@ -1,80 +1,74 @@
-# Agentic O-RAN NAS Traffic Prediction Simulation
+# Agentic O-RAN KPM End-to-End Pipeline
 
-A structurally extensible, Dockerized framework that simulates:
-- **Non-RT RIC / rApp NAS orchestration** (scenario definitions + complexity-aware model selection inputs)
-- **Near-RT RIC / xApp agentic inference** (training/inference + ReAct control loop)
+This repository now supports end-to-end KPM processing with one consistent workflow:
 
-## Project structure (extensible)
+1. Generate a unified dataset (exactly `N` rows) from `RESERVATION-*` folders.
+2. Deterministically split train/val/test (`60%/30%/10%`).
+3. Train a CPU baseline model.
+4. Predict on test (or any reservation csv).
+5. Run all 8 scenarios concurrently via Docker Compose.
+6. Produce final HTML report at `results/final/report.html`.
 
-```text
-.
-├── oran_sim/
-│   ├── config.py        # scenario catalog + feature order
-│   ├── data.py          # synthetic dataset generation + preprocessing
-│   ├── models.py        # LSTM/Attention/Liquid implementations + complexity math
-│   ├── training.py      # reusable training routine
-│   ├── agent.py         # ReAct loop (Thought/Action/Monitor)
-│   └── reporting.py     # markdown tables + chart generation
-├── generate_data.py     # entrypoint: create shared_data/traffic_data.csv
-├── xapp_agent.py        # entrypoint: run one scenario in one container
-├── evaluate_nas.py      # entrypoint: aggregate + rank + report
-├── docker-compose.yml   # 8 concurrent services (one per scenario)
-├── Dockerfile
-└── requirements.txt
-```
+## Required commands
 
-## Scenarios (8)
-1. `lightweight-32`
-2. `lightweight-64`
-3. `balanced-small`
-4. `balanced-medium`
-5. `deep-performance`
-6. `ultra-performance`
-7. `attention-baseline`
-8. `liquid-baseline`
-
-## Math implemented
-
-- **Exact LSTM layer complexity**:
-  \[
-  C_{LSTM}=4\times(d_xd_h+d_h^2+d_h)
-  \]
-- Stacked LSTM total = sum of layer-wise complexities.
-- Attention/Liquid use generalized complexity proxies for cross-architecture comparison.
-- NAS efficiency:
-  \[
-  C_{norm}=\frac{C_{model}}{\max(C_{model})}, \quad E=\frac{C_{norm}}{P_{norm}}
-  \]
-  where `P_norm` is derived from normalized `R^2`.
-
-## Run
-
-### 1) Generate data or read from data-kpm
+### Dataset generation
 ```bash
-python generate_data.py --steps 5000 --output shared_data/traffic_data.csv
-```
-```bash
-python generate_data.py --step 10000 --input shared_data/dataset-kpm --output shared_data/traffic_data.csv
+python generate_data.py --steps 5000 --input shared_data/dataset-kpm --output shared_data/traffic_data.csv
 ```
 
-### 2) Launch all 8 scenario containers concurrently
+### Train
+```bash
+python -m scripts.train --csv shared_data/traffic_data.csv --out_dir results/model --seed 42
+```
+
+### Predict
+```bash
+python -m scripts.predict --model_dir results/model --csv shared_data/traffic_data_test.csv --output results/predictions/preds.csv
+```
+
+### Final report
+```bash
+python -m scripts.report --preds results/predictions/preds.csv --metrics results/model/metrics.json --out results/final/report.html --config results/model/config.json
+```
+
+### Run all 8 scenarios concurrently
 ```bash
 docker compose up --build
 ```
 
-Each service reads `shared_data/traffic_data.csv` and appends its metrics to `shared_data/results.csv`.
+Each scenario emits stdout logs for:
+- scenario started
+- data generation started/done
+- training started/done
+- prediction started/done
+- report generated (status file)
 
-### 3) Build NAS report (tables + charts)
-```bash
-python evaluate_nas.py \
-  --input shared_data/results.csv \
-  --output shared_data/nas_efficiency.csv \
-  --report shared_data/nas_report.md \
-  --chart_dir shared_data/charts
+The aggregator service collects all scenario statuses and writes final report:
+- `results/final/report.html`
+- `results/final/scenario_status.csv`
+
+## Output tree
+
+```text
+shared_data/
+  traffic_data.csv
+  traffic_data_train.csv
+  traffic_data_val.csv
+  traffic_data_test.csv
+
+results/
+  data/traffic_data_summary.json
+  model/
+    model.joblib
+    config.json
+    features.json
+    metrics.json
+  predictions/preds.csv
+  scenarios/<scenario>/
+    status.json
+    model/metrics.json
+    preds.csv
+  final/
+    report.html
+    scenario_status.csv
 ```
-
-Generated outputs:
-- `shared_data/nas_efficiency.csv`
-- `shared_data/nas_report.md` (comparison tables)
-- `shared_data/charts/r2_vs_complexity.png`
-- `shared_data/charts/efficiency_ranking.png`
