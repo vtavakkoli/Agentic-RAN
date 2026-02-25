@@ -199,7 +199,12 @@ def load_timeseries_from_kpm(root_dir: str | Path, n_steps: Optional[int] = None
         raise FileNotFoundError(f"No RESERVATION-* directories found under {root}")
 
     frames: List[pd.DataFrame] = []
+    remaining = n_steps
+    total_used = 0
     for exp in reservations:
+        if remaining is not None and remaining <= 0:
+            break
+
         bs = _load_bs_metrics(exp)
         if bs.empty:
             continue
@@ -232,9 +237,23 @@ def load_timeseries_from_kpm(root_dir: str | Path, n_steps: Optional[int] = None
             merged[k] = v
 
         merged["reservation"] = exp.name
-        frames.append(merged)
+
+        fetched_rows = len(merged)
+        if remaining is None:
+            used_rows = fetched_rows
+            to_append = merged
+        else:
+            used_rows = min(fetched_rows, max(remaining, 0))
+            to_append = merged.iloc[:used_rows].copy()
+            remaining -= used_rows
+
+        frames.append(to_append)
+        total_used += used_rows
         if verbose:
-            print(f"[DATA] reservation={exp.name} rows={len(merged)}")
+            print(
+                f"[DATA] reservation={exp.name} fetched_rows={fetched_rows} "
+                f"used_rows={used_rows} cumulative_used={total_used}"
+            )
 
     if not frames:
         raise RuntimeError("No usable data parsed from reservations")
@@ -269,8 +288,6 @@ def load_timeseries_from_kpm(root_dir: str | Path, n_steps: Optional[int] = None
     df = df.drop_duplicates(subset=["time_ms", "reservation"], keep="first")
     df = df.sort_values("time_ms").reset_index(drop=True)
 
-    if n_steps is not None and len(df) > n_steps:
-        df = df.iloc[:n_steps].copy()
     return df
 
 
