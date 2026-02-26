@@ -20,6 +20,9 @@ def main() -> None:
             break
         time.sleep(5)
 
+    out_dir = Path("results/final")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     rows = []
     for p in status_paths:
         if p.exists():
@@ -28,7 +31,7 @@ def main() -> None:
             rows.append({"scenario_name": p.parent.name, "success": False, "error": "missing status"})
 
     status_df = pd.DataFrame(rows)
-    status_df.to_csv("results/final/scenario_status.csv", index=False)
+    status_df.to_csv(out_dir / "scenario_status.csv", index=False)
 
     available = [r for r in rows if r.get("success")]
     if available:
@@ -51,15 +54,14 @@ def main() -> None:
                     "--config",
                     str(cfg),
                     "--out",
-                    "results/final/report.html",
+                    str(out_dir / "report.html"),
                 ],
                 check=True,
             )
             print("[aggregator] final report generated", flush=True)
             return
 
-    Path("results/final").mkdir(parents=True, exist_ok=True)
-    Path("results/final/report.html").write_text(
+    (out_dir / "report.html").write_text(
         "<html><body><h1>KPM Final Report</h1><p>No successful scenarios.</p></body></html>", encoding="utf-8"
     )
     print("[aggregator] generated fallback report with failures", flush=True)
