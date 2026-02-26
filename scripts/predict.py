@@ -9,6 +9,21 @@ import numpy as np
 import pandas as pd
 
 
+def compute_pct_error(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
+    """Return signed percentage error using absolute true-value denominator.
+
+    This keeps sign from (y_true - y_pred) while avoiding sign flips from
+    negative targets in the denominator.
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    err = y_true - y_pred
+    denom = np.abs(y_true)
+    pct = np.full(err.shape, np.nan, dtype=float)
+    np.divide(err * 100.0, denom, out=pct, where=denom > 1e-6)
+    return pct
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Predict using trained model artifacts")
     p.add_argument("--model_dir", required=True)
@@ -25,7 +40,7 @@ def main() -> None:
     y_true = df["target"].to_numpy()
     y_pred = model.predict(x)
     err = y_true - y_pred
-    pct = np.where(np.abs(y_true) > 1e-6, (err / y_true) * 100.0, np.nan)
+    pct = compute_pct_error(y_true, y_pred)
 
     out_df = pd.DataFrame(
         {

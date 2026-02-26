@@ -12,8 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy only runtime source files needed by the container entrypoint.
+# Copy runtime sources used by scenario runner and report aggregator.
 COPY xapp_agent.py /app/xapp_agent.py
+COPY generate_data.py /app/generate_data.py
 COPY oran_sim /app/oran_sim
+COPY scripts /app/scripts
 
 CMD ["python", "xapp_agent.py", "--model_type", "lightweight-32"]
