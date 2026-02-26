@@ -6,6 +6,8 @@ x-common: &common
   volumes:
     - ./shared_data:/app/shared_data
     - ./results:/app/results
+  environment:
+    EPOCHS: ${EPOCHS:-5}
 
 services:
   lightweight-32:
