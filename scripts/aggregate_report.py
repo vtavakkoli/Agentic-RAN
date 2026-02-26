@@ -119,6 +119,31 @@ def _dataset_summary(dataset_path: Path, scenario: str) -> tuple[pd.DataFrame, s
     return combined, f"<img src='data:image/png;base64,{img}'/>"
 
 
+HIGHER_IS_BETTER = {"R2_test", "R2_val"}
+
+
+def _fig_to_base64(fig) -> str:
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("ascii")
+
+
+def _metric_value(row: dict, primary_metric: str) -> float | None:
+    value = row.get(primary_metric)
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
+def _is_better(current: float, best: float | None, primary_metric: str) -> bool:
+    if best is None:
+        return True
+    if primary_metric in HIGHER_IS_BETTER:
+        return current > best
+    return current < best
+
+
 def main() -> None:
     scenarios = supported_scenarios()
     status_paths = [Path("results/scenarios") / s / "status.json" for s in scenarios]
