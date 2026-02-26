@@ -51,11 +51,19 @@ def _is_better(current: float, best: float | None, primary_metric: str) -> bool:
     return current < best
 
 
+
+
+def _prepare_preds_for_plot(preds: pd.DataFrame) -> pd.DataFrame:
+    if "time_ms" in preds.columns:
+        return preds.sort_values("time_ms").reset_index(drop=True)
+    return preds.reset_index(drop=True)
+
 def _build_timeseries_chart(preds: pd.DataFrame, scenario: str) -> str:
+    sorted_preds = _prepare_preds_for_plot(preds)
     fig, ax = plt.subplots(figsize=(9, 3))
-    x = preds["time_ms"] if "time_ms" in preds.columns else preds.index
-    ax.plot(x.values, preds["y_true"].values, label="y_true", linewidth=1.6)
-    ax.plot(x.values, preds["y_pred"].values, label="y_pred", linewidth=1.2)
+    x = sorted_preds["time_ms"] if "time_ms" in sorted_preds.columns else sorted_preds.index
+    ax.plot(x.values, sorted_preds["y_true"].values, label="y_true", linewidth=1.6)
+    ax.plot(x.values, sorted_preds["y_pred"].values, label="y_pred", linewidth=1.2)
     ax.set_title(f"{scenario}: y_true/y_pred vs timestamp")
     ax.set_xlabel("timestamp")
     ax.legend(loc="best")
@@ -65,13 +73,14 @@ def _build_timeseries_chart(preds: pd.DataFrame, scenario: str) -> str:
 
 
 def _build_naive_chart(preds: pd.DataFrame, scenario: str) -> tuple[str, dict]:
-    y_true = preds["y_true"].to_numpy(dtype=float)
+    sorted_preds = _prepare_preds_for_plot(preds)
+    y_true = sorted_preds["y_true"].to_numpy(dtype=float)
     y_naive = np.roll(y_true, 1)
     y_naive[0] = y_true[0]
     naive_m = _metrics(y_true, y_naive)
 
     fig, ax = plt.subplots(figsize=(9, 3))
-    x = preds["time_ms"] if "time_ms" in preds.columns else preds.index
+    x = sorted_preds["time_ms"] if "time_ms" in sorted_preds.columns else sorted_preds.index
     ax.plot(x.values, y_true, label="y_true", linewidth=1.6)
     ax.plot(x.values, y_naive, label="y_pred_naive", linewidth=1.2)
     ax.set_title(f"{scenario}: naive baseline vs timestamp")
@@ -117,31 +126,6 @@ def _dataset_summary(dataset_path: Path, scenario: str) -> tuple[pd.DataFrame, s
     img = _fig_to_base64(fig)
     plt.close(fig)
     return combined, f"<img src='data:image/png;base64,{img}'/>"
-
-
-HIGHER_IS_BETTER = {"R2_test", "R2_val"}
-
-
-def _fig_to_base64(fig) -> str:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight")
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("ascii")
-
-
-def _metric_value(row: dict, primary_metric: str) -> float | None:
-    value = row.get(primary_metric)
-    if value is None or pd.isna(value):
-        return None
-    return float(value)
-
-
-def _is_better(current: float, best: float | None, primary_metric: str) -> bool:
-    if best is None:
-        return True
-    if primary_metric in HIGHER_IS_BETTER:
-        return current > best
-    return current < best
 
 
 def main() -> None:
