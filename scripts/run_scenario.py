@@ -16,11 +16,33 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
+def _resolve_dataset_path(scenario: str, dataset: str | None) -> Path:
+    if dataset:
+        return Path(dataset)
+
+    candidates = [
+        Path("shared_data") / f"traffic_data_{scenario}.csv",
+        Path("shared_data") / "traffic_data.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise FileNotFoundError(
+        f"No dataset found for scenario '{scenario}'. Expected one of: "
+        + ", ".join(str(c) for c in candidates)
+        + ". Pre-generate data outside docker and mount it in shared_data/."
+    )
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--scenario", required=True)
-    p.add_argument("--input", default="shared_data/dataset-kpm")
-    p.add_argument("--steps", type=int, default=5000)
+    p.add_argument(
+        "--dataset",
+        default=None,
+        help="Path to existing dataset CSV. If omitted, tries shared_data/traffic_data_<scenario>.csv then shared_data/traffic_data.csv.",
+    )
     args = p.parse_args()
 
     scenario = args.scenario
@@ -37,10 +59,8 @@ def main() -> None:
 
     try:
         print(f"[{scenario}] scenario started", flush=True)
-        csv = Path("shared_data") / f"traffic_data_{scenario}.csv"
-        print(f"[{scenario}] data generation started", flush=True)
-        run(["python", "generate_data.py", "--steps", str(args.steps), "--input", args.input, "--output", str(csv)])
-        print(f"[{scenario}] data generation done", flush=True)
+        csv = _resolve_dataset_path(scenario, args.dataset)
+        print(f"[{scenario}] using existing dataset: {csv}", flush=True)
 
         print(f"[{scenario}] training started", flush=True)
         model_type = "ridge" if scenario in {"lightweight-32", "lightweight-64", "attention-baseline", "liquid-baseline"} else "hgb"
