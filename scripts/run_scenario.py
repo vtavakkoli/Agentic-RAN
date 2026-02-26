@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,7 @@ def main() -> None:
     args = p.parse_args()
 
     scenario = args.scenario
+    epochs = int(os.getenv("EPOCHS", "5"))
     sdir = Path("results/scenarios") / scenario
     sdir.mkdir(parents=True, exist_ok=True)
     status = {
@@ -55,16 +57,37 @@ def main() -> None:
         "end_time": None,
         "metrics_path": str(sdir / "model" / "metrics.json"),
         "preds_path": str(sdir / "preds.csv"),
+        "epoch_metrics_path": str(sdir / "model" / "epoch_metrics.csv"),
+        "dataset_path": None,
+        "epochs": epochs,
     }
 
     try:
         print(f"[{scenario}] scenario started", flush=True)
         csv = _resolve_dataset_path(scenario, args.dataset)
+        status["dataset_path"] = str(csv)
         print(f"[{scenario}] using existing dataset: {csv}", flush=True)
+        print(f"[{scenario}] epochs={epochs}", flush=True)
 
         print(f"[{scenario}] training started", flush=True)
         model_type = "ridge" if scenario in {"lightweight-32", "lightweight-64", "attention-baseline", "liquid-baseline"} else "hgb"
-        run(["python", "-m", "scripts.train", "--csv", str(csv), "--out_dir", str(sdir / "model"), "--seed", "42", "--model", model_type])
+        run(
+            [
+                "python",
+                "-m",
+                "scripts.train",
+                "--csv",
+                str(csv),
+                "--out_dir",
+                str(sdir / "model"),
+                "--seed",
+                "42",
+                "--model",
+                model_type,
+                "--epochs",
+                str(epochs),
+            ]
+        )
         print(f"[{scenario}] training done", flush=True)
 
         print(f"[{scenario}] prediction started", flush=True)

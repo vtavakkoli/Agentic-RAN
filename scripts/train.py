@@ -33,6 +33,7 @@ def main() -> None:
     p.add_argument("--out_dir", required=True)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--model", choices=["ridge", "hgb"], default="hgb")
+    p.add_argument("--epochs", type=int, default=5)
     args = p.parse_args()
 
     csv = Path(args.csv)
@@ -74,25 +75,62 @@ def main() -> None:
     x_val, y_val = val_df[features], val_df["target"].to_numpy()
     x_test, y_test = test_df[features], test_df["target"].to_numpy()
 
-    pipe.fit(x_train, y_train)
-    val_pred = pipe.predict(x_val)
-    test_pred = pipe.predict(x_test)
+    epoch_rows: list[dict] = []
+    final_metrics = None
+    for epoch in range(1, max(1, args.epochs) + 1):
+        pipe.fit(x_train, y_train)
+        train_pred = pipe.predict(x_train)
+        val_pred = pipe.predict(x_val)
+        test_pred = pipe.predict(x_test)
 
-    metrics = {"val": _metrics(y_val, val_pred), "test": _metrics(y_test, test_pred)}
+        train_m = _metrics(y_train, train_pred)
+        val_m = _metrics(y_val, val_pred)
+        test_m = _metrics(y_test, test_pred)
+        final_metrics = {"train": train_m, "val": val_m, "test": test_m}
+
+        row = {
+            "epoch": epoch,
+            "train_MAE": train_m["MAE"],
+            "train_RMSE": train_m["RMSE"],
+            "train_R2": train_m["R2"],
+            "val_MAE": val_m["MAE"],
+            "val_RMSE": val_m["RMSE"],
+            "val_R2": val_m["R2"],
+            "test_MAE": test_m["MAE"],
+            "test_RMSE": test_m["RMSE"],
+            "test_R2": test_m["R2"],
+        }
+        epoch_rows.append(row)
+        print(
+            f"epoch={epoch}/{args.epochs} val_MAE={val_m['MAE']:.6f} "
+            f"val_RMSE={val_m['RMSE']:.6f} val_R2={val_m['R2']:.6f}",
+            flush=True,
+        )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipe, out_dir / "model.joblib")
     (out_dir / "features.json").write_text(json.dumps(features, indent=2), encoding="utf-8")
     (out_dir / "config.json").write_text(
-        json.dumps({"seed": args.seed, "model_type": args.model, "target": "target", "horizon": 1, "features": features}, indent=2),
+        json.dumps(
+            {
+                "seed": args.seed,
+                "model_type": args.model,
+                "target": "target",
+                "horizon": 1,
+                "features": features,
+                "epochs": int(max(1, args.epochs)),
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
-    (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (out_dir / "metrics.json").write_text(json.dumps(final_metrics, indent=2), encoding="utf-8")
+    pd.DataFrame(epoch_rows).to_csv(out_dir / "epoch_metrics.csv", index=False)
 
     print(f"train_rows={len(train_df)} val_rows={len(val_df)} test_rows={len(test_df)}")
-    print(f"metrics.val={metrics['val']}")
-    print(f"metrics.test={metrics['test']}")
+    print(f"metrics.val={final_metrics['val']}")
+    print(f"metrics.test={final_metrics['test']}")
 
 
 if __name__ == "__main__":
