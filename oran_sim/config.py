@@ -37,10 +37,11 @@ SCENARIOS: Dict[str, Scenario] = {
     "lightweight-64": Scenario("lightweight-64", "ridge", 12),
     "balanced-small": Scenario("balanced-small", "hgb", 14),
     "balanced-medium": Scenario("balanced-medium", "hgb", 16),
-    "deep-performance": Scenario("deep-performance", "hgb", 18),
+    "deep-performance": Scenario("deep-performance", "hgb", 17),
     "ultra-performance": Scenario("ultra-performance", "hgb", 18),
     "attention-baseline": Scenario("attention-baseline", "ridge", 15),
     "liquid-baseline": Scenario("liquid-baseline", "ridge", 11),
+    "xlstm-baseline": Scenario("xlstm-baseline", "ridge", 13),
 }
 
 

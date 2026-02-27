@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 import subprocess
+
+from oran_sim.config import SCENARIOS
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -70,7 +72,7 @@ def main() -> None:
         print(f"[{scenario}] epochs={epochs}", flush=True)
 
         print(f"[{scenario}] training started", flush=True)
-        model_type = "ridge" if scenario in {"lightweight-32", "lightweight-64", "attention-baseline", "liquid-baseline"} else "hgb"
+        model_type = "ridge" if scenario in {"lightweight-32", "lightweight-64", "attention-baseline", "liquid-baseline", "xlstm-baseline"} else "hgb"
         run(
             [
                 "python",
@@ -86,6 +88,8 @@ def main() -> None:
                 model_type,
                 "--epochs",
                 str(epochs),
+                "--feature_count",
+                str(SCENARIOS[scenario].features),
             ]
         )
         print(f"[{scenario}] training done", flush=True)
