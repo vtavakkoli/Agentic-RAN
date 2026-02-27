@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 import subprocess
+
+from oran_sim.config import SCENARIOS
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -86,6 +88,8 @@ def main() -> None:
                 model_type,
                 "--epochs",
                 str(epochs),
+                "--feature_count",
+                str(SCENARIOS[scenario].features),
             ]
         )
         print(f"[{scenario}] training done", flush=True)
