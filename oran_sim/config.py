@@ -41,6 +41,7 @@ SCENARIOS: Dict[str, Scenario] = {
     "ultra-performance": Scenario("ultra-performance", "hgb", 18),
     "attention-baseline": Scenario("attention-baseline", "ridge", 15),
     "liquid-baseline": Scenario("liquid-baseline", "ridge", 11),
+    "xlstm-baseline": Scenario("xlstm-baseline", "ridge", 13),
 }
 
 
