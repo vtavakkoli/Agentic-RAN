@@ -72,7 +72,6 @@ def main() -> None:
         print(f"[{scenario}] epochs={epochs}", flush=True)
 
         print(f"[{scenario}] training started", flush=True)
-        model_type = "ridge" if scenario in {"lightweight-32", "lightweight-64", "attention-baseline", "liquid-baseline", "xlstm-baseline"} else "hgb"
         run(
             [
                 "python",
@@ -85,7 +84,7 @@ def main() -> None:
                 "--seed",
                 "42",
                 "--model",
-                model_type,
+                scenario,
                 "--epochs",
                 str(epochs),
                 "--feature_count",
