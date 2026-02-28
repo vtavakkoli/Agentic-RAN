@@ -80,35 +80,38 @@ def main() -> None:
     x_val, y_val = val_df[features], val_df["target"].to_numpy()
     x_test, y_test = test_df[features], test_df["target"].to_numpy()
 
+    epochs = int(max(1, args.epochs))
     epoch_rows: list[dict] = []
-    pipe.fit(x_train, y_train)
-    train_pred = pipe.predict(x_train)
-    val_pred = pipe.predict(x_val)
-    test_pred = pipe.predict(x_test)
+    final_metrics = None
+    for epoch in range(1, epochs + 1):
+        pipe.fit(x_train, y_train)
+        train_pred = pipe.predict(x_train)
+        val_pred = pipe.predict(x_val)
+        test_pred = pipe.predict(x_test)
 
-    train_m = _metrics(y_train, train_pred)
-    val_m = _metrics(y_val, val_pred)
-    test_m = _metrics(y_test, test_pred)
-    final_metrics = {"train": train_m, "val": val_m, "test": test_m}
+        train_m = _metrics(y_train, train_pred)
+        val_m = _metrics(y_val, val_pred)
+        test_m = _metrics(y_test, test_pred)
+        final_metrics = {"train": train_m, "val": val_m, "test": test_m}
 
-    row = {
-        "epoch": 1,
-        "train_MAE": train_m["MAE"],
-        "train_RMSE": train_m["RMSE"],
-        "train_R2": train_m["R2"],
-        "val_MAE": val_m["MAE"],
-        "val_RMSE": val_m["RMSE"],
-        "val_R2": val_m["R2"],
-        "test_MAE": test_m["MAE"],
-        "test_RMSE": test_m["RMSE"],
-        "test_R2": test_m["R2"],
-    }
-    epoch_rows.append(row)
-    print(
-        f"epoch=1/1 val_MAE={val_m['MAE']:.6f} "
-        f"val_RMSE={val_m['RMSE']:.6f} val_R2={val_m['R2']:.6f}",
-        flush=True,
-    )
+        row = {
+            "epoch": epoch,
+            "train_MAE": train_m["MAE"],
+            "train_RMSE": train_m["RMSE"],
+            "train_R2": train_m["R2"],
+            "val_MAE": val_m["MAE"],
+            "val_RMSE": val_m["RMSE"],
+            "val_R2": val_m["R2"],
+            "test_MAE": test_m["MAE"],
+            "test_RMSE": test_m["RMSE"],
+            "test_R2": test_m["R2"],
+        }
+        epoch_rows.append(row)
+        print(
+            f"epoch={epoch}/{epochs} val_MAE={val_m['MAE']:.6f} "
+            f"val_RMSE={val_m['RMSE']:.6f} val_R2={val_m['R2']:.6f}",
+            flush=True,
+        )
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipe, out_dir / "model.joblib")
@@ -121,8 +124,7 @@ def main() -> None:
                 "target": "target",
                 "horizon": 1,
                 "features": features,
-                "epochs": 1,
-                "requested_epochs": int(max(1, args.epochs)),
+                "epochs": epochs,
             },
             indent=2,
         ),

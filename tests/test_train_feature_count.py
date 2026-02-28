@@ -42,8 +42,9 @@ def test_train_respects_feature_count(tmp_path) -> None:
 
     features = json.loads((out_dir / "features.json").read_text(encoding="utf-8"))
     cfg = json.loads((out_dir / "config.json").read_text(encoding="utf-8"))
+    epoch_df = pd.read_csv(out_dir / "epoch_metrics.csv")
 
     assert len(features) == 10
     assert features == FEATURE_ORDER[:10]
-    assert cfg["epochs"] == 1
-    assert cfg["requested_epochs"] == 20
+    assert cfg["epochs"] == 20
+    assert len(epoch_df) == 20

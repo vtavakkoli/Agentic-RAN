@@ -24,18 +24,6 @@ def _fig_to_base64(fig) -> str:
     return base64.b64encode(buf.read()).decode("ascii")
 
 
-def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
-    err = y_true - y_pred
-    denom = np.clip(np.abs(y_true), 1e-6, None)
-    mae = float(np.mean(np.abs(err)))
-    rmse = float(np.sqrt(np.mean(err**2)))
-    mape = float(np.mean(np.abs(err) / denom) * 100.0)
-    ss_res = float(np.sum(err**2))
-    ss_tot = float(np.sum((y_true - np.mean(y_true)) ** 2))
-    r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
-    return {"MAE": mae, "RMSE": rmse, "MAPE": mape, "R2": r2}
-
-
 def _metric_value(row: dict, primary_metric: str) -> float | None:
     value = row.get(primary_metric)
     if value is None or pd.isna(value):
@@ -49,8 +37,6 @@ def _is_better(current: float, best: float | None, primary_metric: str) -> bool:
     if primary_metric in HIGHER_IS_BETTER:
         return current > best
     return current < best
-
-
 
 
 def _prepare_preds_for_plot(preds: pd.DataFrame) -> pd.DataFrame:
