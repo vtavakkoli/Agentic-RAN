@@ -42,6 +42,11 @@ services:
     <<: *common
     command: python -m scripts.run_scenario --scenario liquid-baseline
 
+
+  xlstm-baseline:
+    <<: *common
+    command: python -m scripts.run_scenario --scenario xlstm-baseline
+
   aggregator:
     <<: *common
     command: python -m scripts.aggregate_report
@@ -54,3 +59,4 @@ services:
       - ultra-performance
       - attention-baseline
       - liquid-baseline
+      - xlstm-baseline

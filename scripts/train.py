@@ -8,13 +8,12 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from oran_sim.config import FEATURE_ORDER
+from oran_sim.config import FEATURE_ORDER, get_feature_columns
+from oran_sim.model import build_model
 
 
 def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
@@ -32,8 +31,9 @@ def main() -> None:
     p.add_argument("--csv", required=True)
     p.add_argument("--out_dir", required=True)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--model", choices=["ridge", "hgb"], default="hgb")
+    p.add_argument("--model", default="hgb")
     p.add_argument("--epochs", type=int, default=5)
+    p.add_argument("--feature_count", type=int, default=None)
     args = p.parse_args()
 
     csv = Path(args.csv)
@@ -54,8 +54,13 @@ def main() -> None:
         a, b = int(0.6 * n), int(0.9 * n)
         train_df, val_df, test_df = full.iloc[:a].copy(), full.iloc[a:b].copy(), full.iloc[b:].copy()
 
-    features = [c for c in FEATURE_ORDER if c in train_df.columns]
-    if "scheduling_policy" not in features and "scheduling_policy" in train_df.columns:
+    if args.feature_count is not None:
+        desired = get_feature_columns(args.feature_count)
+        features = [c for c in desired if c in train_df.columns]
+    else:
+        features = [c for c in FEATURE_ORDER if c in train_df.columns]
+
+    if "scheduling_policy" not in features and "scheduling_policy" in train_df.columns and args.feature_count is None:
         features.append("scheduling_policy")
     num_features = [c for c in features if c != "scheduling_policy"]
     cat_features = [c for c in features if c == "scheduling_policy"]
@@ -68,7 +73,7 @@ def main() -> None:
         remainder="drop",
     )
 
-    model = Ridge(random_state=args.seed) if args.model == "ridge" else HistGradientBoostingRegressor(random_state=args.seed)
+    model = build_model(args.model, args.seed)
     pipe = Pipeline([("pre", pre), ("model", model)])
 
     x_train, y_train = train_df[features], train_df["target"].to_numpy()
@@ -76,37 +81,34 @@ def main() -> None:
     x_test, y_test = test_df[features], test_df["target"].to_numpy()
 
     epoch_rows: list[dict] = []
-    final_metrics = None
-    for epoch in range(1, max(1, args.epochs) + 1):
-        pipe.fit(x_train, y_train)
-        train_pred = pipe.predict(x_train)
-        val_pred = pipe.predict(x_val)
-        test_pred = pipe.predict(x_test)
+    pipe.fit(x_train, y_train)
+    train_pred = pipe.predict(x_train)
+    val_pred = pipe.predict(x_val)
+    test_pred = pipe.predict(x_test)
 
-        train_m = _metrics(y_train, train_pred)
-        val_m = _metrics(y_val, val_pred)
-        test_m = _metrics(y_test, test_pred)
-        final_metrics = {"train": train_m, "val": val_m, "test": test_m}
+    train_m = _metrics(y_train, train_pred)
+    val_m = _metrics(y_val, val_pred)
+    test_m = _metrics(y_test, test_pred)
+    final_metrics = {"train": train_m, "val": val_m, "test": test_m}
 
-        row = {
-            "epoch": epoch,
-            "train_MAE": train_m["MAE"],
-            "train_RMSE": train_m["RMSE"],
-            "train_R2": train_m["R2"],
-            "val_MAE": val_m["MAE"],
-            "val_RMSE": val_m["RMSE"],
-            "val_R2": val_m["R2"],
-            "test_MAE": test_m["MAE"],
-            "test_RMSE": test_m["RMSE"],
-            "test_R2": test_m["R2"],
-        }
-        epoch_rows.append(row)
-        print(
-            f"epoch={epoch}/{args.epochs} val_MAE={val_m['MAE']:.6f} "
-            f"val_RMSE={val_m['RMSE']:.6f} val_R2={val_m['R2']:.6f}",
-            flush=True,
-        )
-
+    row = {
+        "epoch": 1,
+        "train_MAE": train_m["MAE"],
+        "train_RMSE": train_m["RMSE"],
+        "train_R2": train_m["R2"],
+        "val_MAE": val_m["MAE"],
+        "val_RMSE": val_m["RMSE"],
+        "val_R2": val_m["R2"],
+        "test_MAE": test_m["MAE"],
+        "test_RMSE": test_m["RMSE"],
+        "test_R2": test_m["R2"],
+    }
+    epoch_rows.append(row)
+    print(
+        f"epoch=1/1 val_MAE={val_m['MAE']:.6f} "
+        f"val_RMSE={val_m['RMSE']:.6f} val_R2={val_m['R2']:.6f}",
+        flush=True,
+    )
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipe, out_dir / "model.joblib")
@@ -119,7 +121,8 @@ def main() -> None:
                 "target": "target",
                 "horizon": 1,
                 "features": features,
-                "epochs": int(max(1, args.epochs)),
+                "epochs": 1,
+                "requested_epochs": int(max(1, args.epochs)),
             },
             indent=2,
         ),

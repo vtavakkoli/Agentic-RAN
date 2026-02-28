@@ -72,23 +72,40 @@ def _build_timeseries_chart(preds: pd.DataFrame, scenario: str) -> str:
     return img
 
 
-def _build_naive_chart(preds: pd.DataFrame, scenario: str) -> tuple[str, dict]:
-    sorted_preds = _prepare_preds_for_plot(preds)
-    y_true = sorted_preds["y_true"].to_numpy(dtype=float)
-    y_naive = np.roll(y_true, 1)
-    y_naive[0] = y_true[0]
-    naive_m = _metrics(y_true, y_naive)
+def _build_benchmark_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
 
-    fig, ax = plt.subplots(figsize=(9, 3))
-    x = sorted_preds["time_ms"] if "time_ms" in sorted_preds.columns else sorted_preds.index
-    ax.plot(x.values, y_true, label="y_true", linewidth=1.6)
-    ax.plot(x.values, y_naive, label="y_pred_naive", linewidth=1.2)
-    ax.set_title(f"{scenario}: naive baseline vs timestamp")
-    ax.set_xlabel("timestamp")
-    ax.legend(loc="best")
-    img = _fig_to_base64(fig)
-    plt.close(fig)
-    return img, naive_m
+    work = df.copy()
+    for c in ["R2_test", "RMSE_test", "MAE_test", "MAPE_test"]:
+        if c in work.columns:
+            work[c] = pd.to_numeric(work[c], errors="coerce")
+
+    work["benchmark_score"] = np.nan
+    valid = work[[c for c in ["R2_test", "RMSE_test", "MAE_test", "MAPE_test"] if c in work.columns]].dropna()
+    if not valid.empty:
+        r2_min = valid["R2_test"].min() if "R2_test" in valid.columns else np.nan
+        r2_max = valid["R2_test"].max() if "R2_test" in valid.columns else np.nan
+        rmse_min = valid["RMSE_test"].min() if "RMSE_test" in valid.columns else np.nan
+        rmse_max = valid["RMSE_test"].max() if "RMSE_test" in valid.columns else np.nan
+        mae_min = valid["MAE_test"].min() if "MAE_test" in valid.columns else np.nan
+        mae_max = valid["MAE_test"].max() if "MAE_test" in valid.columns else np.nan
+        mape_min = valid["MAPE_test"].min() if "MAPE_test" in valid.columns else np.nan
+        mape_max = valid["MAPE_test"].max() if "MAPE_test" in valid.columns else np.nan
+
+        eps = 1e-12
+        work["benchmark_score"] = (
+            ((work.get("R2_test") - r2_min) / max((r2_max - r2_min), eps))
+            + (1.0 - ((work.get("RMSE_test") - rmse_min) / max((rmse_max - rmse_min), eps)))
+            + (1.0 - ((work.get("MAE_test") - mae_min) / max((mae_max - mae_min), eps)))
+            + (1.0 - ((work.get("MAPE_test") - mape_min) / max((mape_max - mape_min), eps)))
+        ) / 4.0
+
+    rank_cols = [c for c in ["scenario", "model_type", "R2_test", "RMSE_test", "MAE_test", "MAPE_test", "benchmark_score"] if c in work.columns]
+    ranked = work[rank_cols].sort_values("benchmark_score", ascending=False, na_position="last").reset_index(drop=True)
+    if not ranked.empty:
+        ranked.insert(0, "benchmark_rank", np.arange(1, len(ranked) + 1))
+    return ranked
 
 
 def _dataset_summary(dataset_path: Path, scenario: str) -> tuple[pd.DataFrame, str]:
@@ -144,7 +161,6 @@ def main() -> None:
 
     rows: list[dict] = []
     model_chart_sections: list[str] = []
-    naive_chart_sections: list[str] = []
     dataset_table_sections: list[str] = []
     violin_sections: list[str] = []
 
@@ -205,16 +221,6 @@ def main() -> None:
             model_chart = _build_timeseries_chart(preds, scenario)
             model_chart_sections.append(f"<h3>{scenario}</h3><img src='data:image/png;base64,{model_chart}'/>")
 
-            naive_chart, naive_m = _build_naive_chart(preds, scenario)
-            row["naive_MAE"] = naive_m["MAE"]
-            row["naive_RMSE"] = naive_m["RMSE"]
-            row["naive_MAPE"] = naive_m["MAPE"]
-            row["naive_R2"] = naive_m["R2"]
-            row["model_beats_naive_MAE"] = row.get("MAE_test", np.inf) < naive_m["MAE"]
-            naive_chart_sections.append(
-                f"<h3>{scenario}</h3><p>Naive metrics: {json.dumps(naive_m)}</p><img src='data:image/png;base64,{naive_chart}'/>"
-            )
-
         dpath_str = str(row.get("dataset_path", "")).strip()
         if dpath_str:
             stats_df, violin_html = _dataset_summary(Path(dpath_str), scenario)
@@ -249,11 +255,6 @@ def main() -> None:
         "RMSE_test",
         "MAPE_test",
         "R2_test",
-        "naive_MAE",
-        "naive_RMSE",
-        "naive_MAPE",
-        "naive_R2",
-        "model_beats_naive_MAE",
         "mean_abs_error",
         "mean_abs_pct_error",
         "error",
@@ -270,16 +271,20 @@ def main() -> None:
         else f"Best scenario by {primary_metric}: unavailable (no valid metric values found)."
     )
 
+    benchmark_df = _build_benchmark_table(comp_df)
+
     html = f"""
     <html><body>
     <h1>KPM Final Report</h1>
+    <h2>Scientific Summary</h2>
+    <p>This report compares all successful scenarios under a unified benchmark protocol using test-set R2 (higher is better), RMSE/MAE/MAPE (lower is better), and a composite benchmark score derived from min-max normalization.</p>
     <h2>Scenario Comparison</h2>
     <p>{best_text}</p>
     {table_df.to_html(index=False)}
+    <h2>Benchmark Leaderboard</h2>
+    {benchmark_df.to_html(index=False) if not benchmark_df.empty else '<p>No benchmark-ready metrics available.</p>'}
     <h2>Model Predictions vs Ground Truth (timestamp axis)</h2>
     {''.join(model_chart_sections) if model_chart_sections else '<p>No model charts available.</p>'}
-    <h2>Naive Baseline Comparison</h2>
-    {''.join(naive_chart_sections) if naive_chart_sections else '<p>No naive baseline charts available.</p>'}
     <h2>Dataset/Feature Statistics</h2>
     {''.join(dataset_table_sections) if dataset_table_sections else '<p>No dataset stats available.</p>'}
     <h2>Feature Violin Plots</h2>
