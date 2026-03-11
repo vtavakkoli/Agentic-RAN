@@ -24,6 +24,7 @@ def test_aggregate_report_handles_feature_and_new_metrics(tmp_path, monkeypatch)
                 "preds_path": str(sdir / "preds.csv"),
                 "dataset_path": "",
                 "split_metadata": {"train_start_index": 0, "train_end_index": 5, "val_start_index": 6, "val_end_index": 7, "test_start_index": 8, "test_end_index": 9, "train_rows": 6, "val_rows": 2, "test_rows": 2, "train_pct": 0.6, "val_pct": 0.2, "test_pct": 0.2},
+                "end_time": "2024-01-01T00:00:00Z",
             }
         ),
         encoding="utf-8",
@@ -38,6 +39,7 @@ def test_aggregate_report_handles_feature_and_new_metrics(tmp_path, monkeypatch)
                 "features": ["dl_cqi", "ul_sinr"],
                 "epochs": 1,
                 "split_metadata": {"train_start_index": 0, "train_end_index": 5, "val_start_index": 6, "val_end_index": 7, "test_start_index": 8, "test_end_index": 9, "train_rows": 6, "val_rows": 2, "test_rows": 2, "train_pct": 0.6, "val_pct": 0.2, "test_pct": 0.2},
+                "end_time": "2024-01-01T00:00:00Z",
             }
         ),
         encoding="utf-8",

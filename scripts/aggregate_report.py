@@ -17,6 +17,16 @@ from oran_sim.config import FEATURE_ORDER, supported_scenarios
 HIGHER_IS_BETTER = {"R2_test", "R2_val"}
 
 
+def _status_ready(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        status = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return bool(status.get("end_time"))
+
+
 def _fig_to_base64(fig) -> str:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
@@ -205,9 +215,11 @@ def main() -> None:
     print("[aggregator] waiting for scenario statuses", flush=True)
     deadline = time.time() + 60 * 60
     while time.time() < deadline:
-        if all(p.exists() for p in status_paths):
+        if all(_status_ready(p) for p in status_paths):
             break
         time.sleep(5)
+    else:
+        print("[aggregator] timeout waiting for fresh scenario statuses; proceeding with available files", flush=True)
 
     out_dir = Path("results/final")
     out_dir.mkdir(parents=True, exist_ok=True)

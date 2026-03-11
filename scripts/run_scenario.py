@@ -67,6 +67,7 @@ def main() -> None:
         "split_metadata_path": str(sdir / "model" / "split_metadata.json"),
     }
 
+    (sdir / "status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
     try:
         print(f"[{scenario}] scenario started", flush=True)
         csv = _resolve_dataset_path(scenario, args.dataset)
