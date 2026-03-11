@@ -62,6 +62,8 @@ def main() -> None:
         "epoch_metrics_path": str(sdir / "model" / "epoch_metrics.csv"),
         "dataset_path": None,
         "epochs": epochs,
+        "selected_features": [],
+        "feature_importance_path": str(sdir / "model" / "feature_importance.json"),
     }
 
     try:
@@ -92,6 +94,18 @@ def main() -> None:
             ]
         )
         print(f"[{scenario}] training done", flush=True)
+
+        features_path = sdir / "model" / "features.json"
+        if features_path.exists():
+            status["selected_features"] = json.loads(features_path.read_text(encoding="utf-8"))
+
+        cfg_path = sdir / "model" / "config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            status["model_backend"] = cfg.get("model_backend")
+            status["logical_profile"] = cfg.get("logical_profile")
+            status["profile_note"] = cfg.get("profile_note")
+            status["seq_len"] = cfg.get("seq_len")
 
         print(f"[{scenario}] prediction started", flush=True)
         run(
