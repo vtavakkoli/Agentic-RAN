@@ -63,12 +63,12 @@ def _build_benchmark_table(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     work = df.copy()
-    for c in ["R2_test", "RMSE_test", "MAE_test", "MAPE_test"]:
+    for c in ["R2_test", "RMSE_test", "MAE_test", "MAPE_test", "sMAPE_test", "wMAPE_test"]:
         if c in work.columns:
             work[c] = pd.to_numeric(work[c], errors="coerce")
 
     work["benchmark_score"] = np.nan
-    valid = work[[c for c in ["R2_test", "RMSE_test", "MAE_test", "MAPE_test"] if c in work.columns]].dropna()
+    valid = work[[c for c in ["R2_test", "RMSE_test", "MAE_test", "MAPE_test", "sMAPE_test", "wMAPE_test"] if c in work.columns]].dropna()
     if not valid.empty:
         r2_min = valid["R2_test"].min() if "R2_test" in valid.columns else np.nan
         r2_max = valid["R2_test"].max() if "R2_test" in valid.columns else np.nan
@@ -87,7 +87,7 @@ def _build_benchmark_table(df: pd.DataFrame) -> pd.DataFrame:
             + (1.0 - ((work.get("MAPE_test") - mape_min) / max((mape_max - mape_min), eps)))
         ) / 4.0
 
-    rank_cols = [c for c in ["scenario", "model_type", "R2_test", "RMSE_test", "MAE_test", "MAPE_test", "benchmark_score"] if c in work.columns]
+    rank_cols = [c for c in ["scenario", "model_type", "model_backend", "R2_test", "RMSE_test", "MAE_test", "MAPE_test", "sMAPE_test", "wMAPE_test", "benchmark_score"] if c in work.columns]
     ranked = work[rank_cols].sort_values("benchmark_score", ascending=False, na_position="last").reset_index(drop=True)
     if not ranked.empty:
         ranked.insert(0, "benchmark_rank", np.arange(1, len(ranked) + 1))
@@ -180,6 +180,10 @@ def main() -> None:
         if cfg_path.exists():
             cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
             row["model_type"] = cfg.get("model_type")
+            row["model_backend"] = cfg.get("model_backend")
+            row["logical_profile"] = cfg.get("logical_profile")
+            row["profile_note"] = cfg.get("profile_note")
+            row["selected_features"] = ", ".join(cfg.get("features", []))
             row["num_features"] = len(cfg.get("features", []))
             row["epochs"] = cfg.get("epochs", row.get("epochs"))
         else:
@@ -194,7 +198,7 @@ def main() -> None:
             metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
             test_metrics = metrics.get("test", {})
             val_metrics = metrics.get("val", {})
-            for key in ["MAE", "RMSE", "MAPE", "R2"]:
+            for key in ["MAE", "RMSE", "MAPE", "sMAPE", "wMAPE", "R2"]:
                 row[f"{key}_test"] = test_metrics.get(key)
                 row[f"{key}_val"] = val_metrics.get(key)
 
@@ -233,6 +237,8 @@ def main() -> None:
         "scenario",
         "success",
         "model_type",
+        "model_backend",
+        "logical_profile",
         "epochs",
         "epochs_logged",
         "rows",
@@ -240,9 +246,13 @@ def main() -> None:
         "MAE_test",
         "RMSE_test",
         "MAPE_test",
+        "sMAPE_test",
+        "wMAPE_test",
         "R2_test",
         "mean_abs_error",
         "mean_abs_pct_error",
+        "selected_features",
+        "profile_note",
         "error",
     ]
     present_cols = [c for c in table_cols if c in comp_df.columns]
@@ -259,16 +269,28 @@ def main() -> None:
 
     benchmark_df = _build_benchmark_table(comp_df)
 
+
+    feature_importance_path = Path("results/feature_importance.json")
+    feature_importance_html = "<p>Feature importance artifact not found.</p>"
+    if feature_importance_path.exists():
+        feature_importance_payload = json.loads(feature_importance_path.read_text(encoding="utf-8"))
+        feature_importance_df = pd.DataFrame(feature_importance_payload.get("feature_importance", []))
+        if not feature_importance_df.empty:
+            feature_importance_html = feature_importance_df.to_html(index=False)
+
     html = f"""
     <html><body>
     <h1>KPM Final Report</h1>
     <h2>Scientific Summary</h2>
-    <p>This report compares all successful scenarios under a unified benchmark protocol using test-set R2 (higher is better), RMSE/MAE/MAPE (lower is better), and a composite benchmark score derived from min-max normalization.</p>
+    <p>This report compares all successful scenarios under a unified benchmark protocol using test-set R2 (higher is better), RMSE/MAE/MAPE/sMAPE/wMAPE (lower is better), and a composite benchmark score derived from min-max normalization.</p>
+    <p>Note: MAPE can be unstable when targets approach zero; sMAPE and wMAPE are included as more stable alternatives.</p>
     <h2>Scenario Comparison</h2>
     <p>{best_text}</p>
     {table_df.to_html(index=False)}
     <h2>Benchmark Leaderboard</h2>
     {benchmark_df.to_html(index=False) if not benchmark_df.empty else '<p>No benchmark-ready metrics available.</p>'}
+    <h2>Global Feature Importance (train-only Random Forest)</h2>
+    {feature_importance_html}
     <h2>Model Predictions vs Ground Truth (timestamp axis)</h2>
     {''.join(model_chart_sections) if model_chart_sections else '<p>No model charts available.</p>'}
     <h2>Dataset/Feature Statistics</h2>

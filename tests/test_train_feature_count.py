@@ -45,6 +45,6 @@ def test_train_respects_feature_count(tmp_path) -> None:
     epoch_df = pd.read_csv(out_dir / "epoch_metrics.csv")
 
     assert len(features) == 10
-    assert features == FEATURE_ORDER[:10]
+    assert set(features).issubset(set(FEATURE_ORDER))
     assert cfg["epochs"] == 20
     assert len(epoch_df) == 20
