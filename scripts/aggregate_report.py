@@ -50,6 +50,8 @@ def _is_better(current: float, best: float | None, primary_metric: str) -> bool:
 
 
 def _prepare_preds_for_plot(preds: pd.DataFrame) -> pd.DataFrame:
+    if "global_index" in preds.columns:
+        return preds.sort_values("global_index").reset_index(drop=True)
     if "time_ms" in preds.columns:
         return preds.sort_values("time_ms").reset_index(drop=True)
     return preds.reset_index(drop=True)
@@ -57,6 +59,16 @@ def _prepare_preds_for_plot(preds: pd.DataFrame) -> pd.DataFrame:
 def _build_timeseries_chart(preds: pd.DataFrame, scenario: str, split_meta: dict | None = None) -> str:
     sorted_preds = _prepare_preds_for_plot(preds)
     fig, ax = plt.subplots(figsize=(9, 3))
+
+    if "global_index" in sorted_preds.columns:
+        x_vals = sorted_preds["global_index"].to_numpy()
+        x_label = "global row index"
+    elif "time_ms" in sorted_preds.columns:
+        x_vals = sorted_preds["time_ms"].to_numpy()
+        x_label = "timestamp"
+    else:
+        x_vals = sorted_preds.index.to_numpy()
+        x_label = "row index"
 
     if split_meta:
         tr_s = split_meta.get("train_start_index", 0)
@@ -66,31 +78,20 @@ def _build_timeseries_chart(preds: pd.DataFrame, scenario: str, split_meta: dict
         te_s = split_meta.get("test_start_index", 0)
         te_e = split_meta.get("test_end_index", len(sorted_preds) - 1)
 
-        full_x = np.arange(int(max(te_e + 1, len(sorted_preds))))
-        y_true_full = np.full(full_x.shape, np.nan, dtype=float)
-        y_pred_full = np.full(full_x.shape, np.nan, dtype=float)
-        test_slice = slice(int(te_s), int(min(te_s + len(sorted_preds), len(full_x))))
-        n_fill = test_slice.stop - test_slice.start
-        y_true_full[test_slice] = sorted_preds["y_true"].values[:n_fill]
-        y_pred_full[test_slice] = sorted_preds["y_pred"].values[:n_fill]
-
         ax.axvspan(tr_s, tr_e, alpha=0.15, color="#2ca02c", label="Train region")
         ax.axvspan(va_s, va_e, alpha=0.15, color="#ff7f0e", label="Validation region")
         ax.axvspan(te_s, te_e, alpha=0.15, color="#1f77b4", label="Test region")
         ax.axvline(tr_e, color="#2ca02c", linestyle="--", linewidth=1.2)
         ax.axvline(va_e, color="#ff7f0e", linestyle="--", linewidth=1.2)
 
-        ax.plot(full_x, y_true_full, label="y_true (test window)", linewidth=1.4, color="black")
-        ax.plot(full_x, y_pred_full, label="y_pred (test window)", linewidth=1.1, color="red")
-        ax.set_xlabel("global row index")
-    else:
-        x = sorted_preds["time_ms"] if "time_ms" in sorted_preds.columns else sorted_preds.index
-        ax.plot(x.values, sorted_preds["y_true"].values, label="y_true", linewidth=1.6)
-        ax.plot(x.values, sorted_preds["y_pred"].values, label="y_pred", linewidth=1.2)
-        ax.set_xlabel("timestamp")
+    ax.plot(x_vals, sorted_preds["y_true"].to_numpy(), label="y_true", linewidth=1.5, color="blue")
+    ax.plot(x_vals, sorted_preds["y_pred"].to_numpy(), label="y_pred", linewidth=1.2, color="yellow")
+    ax.set_xlabel(x_label)
+    ax.set_title(f"{scenario}: y_true vs y_pred across train/validation/test")
 
-    ax.set_title(f"{scenario}: predictions with chronological split boundaries")
-    ax.legend(loc="best", fontsize=8)
+    handles, labels = ax.get_legend_handles_labels()
+    dedup = dict(zip(labels, handles))
+    ax.legend(dedup.values(), dedup.keys(), loc="best", fontsize=8)
     img = _fig_to_base64(fig)
     plt.close(fig)
     return img

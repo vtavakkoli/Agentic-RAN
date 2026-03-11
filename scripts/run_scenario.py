@@ -4,10 +4,13 @@ import argparse
 import json
 import os
 import subprocess
+import tempfile
 
 from oran_sim.config import SCENARIOS
 from datetime import datetime, timezone
 from pathlib import Path
+
+import pandas as pd
 
 
 def _iso_now() -> str:
@@ -17,6 +20,22 @@ def _iso_now() -> str:
 def run(cmd: list[str]) -> None:
     print(f"[CMD] {' '.join(cmd)}", flush=True)
     subprocess.run(cmd, check=True)
+
+
+def _combine_split_predictions(split_outputs: list[tuple[str, Path]]) -> pd.DataFrame:
+    parts: list[pd.DataFrame] = []
+    offset = 0
+    for split_name, pred_path in split_outputs:
+        pred_df = pd.read_csv(pred_path).copy()
+        pred_df["split"] = split_name
+        pred_df["global_index"] = pred_df["index"].to_numpy() + offset
+        offset += len(pred_df)
+        parts.append(pred_df)
+
+    if not parts:
+        return pd.DataFrame()
+
+    return pd.concat(parts, ignore_index=True)
 
 
 def _resolve_dataset_path(scenario: str, dataset: str | None) -> Path:
@@ -114,19 +133,29 @@ def main() -> None:
             status["seq_len"] = cfg.get("seq_len")
 
         print(f"[{scenario}] prediction started", flush=True)
-        run(
-            [
-                "python",
-                "-m",
-                "scripts.predict",
-                "--model_dir",
-                str(sdir / "model"),
-                "--csv",
-                str(csv.with_name(f"{csv.stem}_test.csv")),
-                "--output",
-                str(sdir / "preds.csv"),
-            ]
-        )
+        split_outputs: list[tuple[str, Path]] = []
+        split_names = ["train", "val", "test"]
+        with tempfile.TemporaryDirectory(prefix=f"{scenario}_preds_") as tmp_dir:
+            for split_name in split_names:
+                split_csv = csv.with_name(f"{csv.stem}_{split_name}.csv")
+                split_pred_path = Path(tmp_dir) / f"preds_{split_name}.csv"
+                run(
+                    [
+                        "python",
+                        "-m",
+                        "scripts.predict",
+                        "--model_dir",
+                        str(sdir / "model"),
+                        "--csv",
+                        str(split_csv),
+                        "--output",
+                        str(split_pred_path),
+                    ]
+                )
+                split_outputs.append((split_name, split_pred_path))
+
+            combined_preds = _combine_split_predictions(split_outputs)
+            combined_preds.to_csv(sdir / "preds.csv", index=False)
         print(f"[{scenario}] prediction done", flush=True)
         status["success"] = True
     except Exception as exc:
