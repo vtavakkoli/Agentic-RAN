@@ -286,6 +286,15 @@ def main() -> None:
         if not feature_importance_df.empty:
             feature_importance_html = feature_importance_df.to_html(index=False)
 
+
+    feature_importance_path = Path("results/feature_importance.json")
+    feature_importance_html = "<p>Feature importance artifact not found.</p>"
+    if feature_importance_path.exists():
+        feature_importance_payload = json.loads(feature_importance_path.read_text(encoding="utf-8"))
+        feature_importance_df = pd.DataFrame(feature_importance_payload.get("feature_importance", []))
+        if not feature_importance_df.empty:
+            feature_importance_html = feature_importance_df.to_html(index=False)
+
     html = f"""
     <html><body>
     <h1>KPM Final Report</h1>
