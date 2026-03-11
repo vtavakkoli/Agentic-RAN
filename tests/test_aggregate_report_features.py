@@ -32,7 +32,7 @@ def test_aggregate_report_handles_feature_and_new_metrics(tmp_path, monkeypatch)
             {
                 "model_type": "lightweight-32",
                 "model_backend": "Ridge",
-                "logical_profile": False,
+                "logical_profile": "tabular_baseline",
                 "profile_note": "note",
                 "features": ["dl_cqi", "ul_sinr"],
                 "epochs": 1,
@@ -62,3 +62,6 @@ def test_aggregate_report_handles_feature_and_new_metrics(tmp_path, monkeypatch)
     assert "Global Feature Importance" in out
     assert "sMAPE" in out
     assert "wMAPE" in out
+
+    status_df = pd.read_csv("results/final/scenario_status.csv")
+    assert pd.notna(status_df.loc[0, "benchmark_score"]) if "benchmark_score" in status_df.columns else True

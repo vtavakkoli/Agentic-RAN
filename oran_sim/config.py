@@ -30,18 +30,20 @@ class Scenario:
     name: str
     kind: str
     features: int
+    seq_len: int | None = None
+    architecture: str | None = None
 
 
 SCENARIOS: Dict[str, Scenario] = {
-    "lightweight-32": Scenario("lightweight-32", "ridge", 10),
-    "lightweight-64": Scenario("lightweight-64", "ridge", 12),
-    "balanced-small": Scenario("balanced-small", "hgb", 14),
-    "balanced-medium": Scenario("balanced-medium", "hgb", 16),
-    "deep-performance": Scenario("deep-performance", "hgb", 17),
-    "ultra-performance": Scenario("ultra-performance", "hgb", 18),
-    "attention-baseline": Scenario("attention-baseline", "ridge", 15),
-    "liquid-baseline": Scenario("liquid-baseline", "ridge", 11),
-    "xlstm-baseline": Scenario("xlstm-baseline", "ridge", 13),
+    "lightweight-32": Scenario("lightweight-32", "tabular", 10),
+    "lightweight-64": Scenario("lightweight-64", "tabular", 12),
+    "balanced-small": Scenario("balanced-small", "tabular", 14),
+    "balanced-medium": Scenario("balanced-medium", "tabular", 16),
+    "deep-performance": Scenario("deep-performance", "temporal", 17, seq_len=16, architecture="lstm"),
+    "ultra-performance": Scenario("ultra-performance", "temporal", 18, seq_len=24, architecture="lstm"),
+    "attention-baseline": Scenario("attention-baseline", "temporal", 15, seq_len=16, architecture="attention"),
+    "liquid-baseline": Scenario("liquid-baseline", "temporal", 11, seq_len=12, architecture="liquid"),
+    "xlstm-baseline": Scenario("xlstm-baseline", "temporal", 13, seq_len=24, architecture="lstm"),
 }
 
 

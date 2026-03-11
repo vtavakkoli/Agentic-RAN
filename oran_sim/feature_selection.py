@@ -14,6 +14,7 @@ def rank_features_by_importance(
     *,
     random_state: int = 42,
     n_estimators: int = 200,
+    n_jobs: int = -1,
 ) -> pd.DataFrame:
     """Rank features by RandomForestRegressor importance using train split only."""
     features = [c for c in candidate_features if c in train_df.columns]
@@ -27,7 +28,7 @@ def rank_features_by_importance(
     x = x.fillna(0.0)
     y = train_df[target_col].to_numpy()
 
-    rf = RandomForestRegressor(random_state=random_state, n_estimators=n_estimators)
+    rf = RandomForestRegressor(random_state=random_state, n_estimators=n_estimators, n_jobs=n_jobs)
     rf.fit(x, y)
 
     importance_df = pd.DataFrame({"feature": features, "importance": rf.feature_importances_})
