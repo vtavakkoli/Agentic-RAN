@@ -12,16 +12,26 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from oran_sim.config import FEATURE_ORDER, get_feature_columns
-from oran_sim.model import build_model
+from oran_sim.config import FEATURE_ORDER
+from oran_sim.feature_selection import (
+    rank_features_by_importance,
+    select_top_k_features,
+    write_feature_importance_artifacts,
+)
+from oran_sim.model import build_model, get_model_metadata
 
 
 def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     mape_denom = np.clip(np.abs(y_true), 1e-6, None)
+    smape_denom = np.clip(np.abs(y_true) + np.abs(y_pred), 1e-6, None)
+    wmape_denom = np.clip(np.sum(np.abs(y_true)), 1e-6, None)
+    abs_err = np.abs(y_true - y_pred)
     return {
         "MAE": float(mean_absolute_error(y_true, y_pred)),
         "RMSE": float(np.sqrt(mean_squared_error(y_true, y_pred))),
         "MAPE": float(np.mean(np.abs((y_true - y_pred) / mape_denom)) * 100.0),
+        "sMAPE": float(np.mean(2.0 * abs_err / smape_denom) * 100.0),
+        "wMAPE": float(np.sum(abs_err) / wmape_denom * 100.0),
         "R2": float(r2_score(y_true, y_pred)),
     }
 
@@ -54,11 +64,12 @@ def main() -> None:
         a, b = int(0.6 * n), int(0.9 * n)
         train_df, val_df, test_df = full.iloc[:a].copy(), full.iloc[a:b].copy(), full.iloc[b:].copy()
 
-    if args.feature_count is not None:
-        desired = get_feature_columns(args.feature_count)
-        features = [c for c in desired if c in train_df.columns]
-    else:
-        features = [c for c in FEATURE_ORDER if c in train_df.columns]
+    candidate_features = [c for c in FEATURE_ORDER if c in train_df.columns]
+    importance_df = rank_features_by_importance(train_df, candidate_features, random_state=args.seed)
+
+    feature_count = args.feature_count if args.feature_count is not None else len(candidate_features)
+    feature_count = min(feature_count, len(candidate_features))
+    features = select_top_k_features(importance_df, feature_count)
 
     if "scheduling_policy" not in features and "scheduling_policy" in train_df.columns and args.feature_count is None:
         features.append("scheduling_policy")
@@ -74,6 +85,7 @@ def main() -> None:
     )
 
     model = build_model(args.model, args.seed)
+    model_meta = get_model_metadata(args.model)
     pipe = Pipeline([("pre", pre), ("model", model)])
 
     x_train, y_train = train_df[features], train_df["target"].to_numpy()
@@ -114,6 +126,16 @@ def main() -> None:
         )
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    write_feature_importance_artifacts(
+        importance_df,
+        json_path=Path("results") / "feature_importance.json",
+        csv_path=Path("results") / "feature_importance.csv",
+    )
+    write_feature_importance_artifacts(
+        importance_df,
+        json_path=out_dir / "feature_importance.json",
+        csv_path=out_dir / "feature_importance.csv",
+    )
     joblib.dump(pipe, out_dir / "model.joblib")
     (out_dir / "features.json").write_text(json.dumps(features, indent=2), encoding="utf-8")
     (out_dir / "config.json").write_text(
@@ -121,9 +143,13 @@ def main() -> None:
             {
                 "seed": args.seed,
                 "model_type": args.model,
+                "model_backend": model_meta["backend"],
+                "logical_profile": model_meta["logical_profile"],
+                "profile_note": model_meta["profile_note"],
                 "target": "target",
                 "horizon": 1,
                 "features": features,
+                "feature_selection": "random_forest_importance_top_k",
                 "epochs": epochs,
             },
             indent=2,
