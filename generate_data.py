@@ -10,6 +10,7 @@ import pandas as pd
 
 from oran_sim.config import FEATURE_ORDER
 from oran_sim.data import load_timeseries_from_kpm, write_json
+from oran_sim.splitting import chronological_split
 
 
 def _build_target(df: pd.DataFrame, target: str, horizon_steps: int) -> pd.DataFrame:
@@ -52,16 +53,6 @@ def _expand_to_exact_rows(df: pd.DataFrame, steps: int, seed: int) -> tuple[pd.D
     return expanded.iloc[:steps].copy(), logs
 
 
-def _det_split(df: pd.DataFrame, seed: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    shuffled = df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
-    n = len(shuffled)
-    n_train = int(n * 0.6)
-    n_val = int(n * 0.3)
-    n_test = n - n_train - n_val
-    train = shuffled.iloc[:n_train].copy()
-    val = shuffled.iloc[n_train : n_train + n_val].copy()
-    test = shuffled.iloc[n_train + n_val : n_train + n_val + n_test].copy()
-    return train, val, test
 
 
 def main() -> None:
@@ -85,7 +76,7 @@ def main() -> None:
     base = base[keep_cols]
 
     exact_df, sampling_logs = _expand_to_exact_rows(base, args.steps, args.seed)
-    train_df, val_df, test_df = _det_split(exact_df, args.seed)
+    train_df, val_df, test_df, split_meta = chronological_split(exact_df, train_ratio=0.6, val_ratio=0.3, test_ratio=0.1)
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -110,6 +101,7 @@ def main() -> None:
         "features_present": [c for c in FEATURE_ORDER if c in exact_df.columns],
         "target_definition": {"name": args.target, "horizon_steps": int(args.horizon_steps)},
         "sampling_logs": sampling_logs,
+        "split_metadata": split_meta,
     }
     summary_path = Path("results/data/traffic_data_summary.json")
     write_json(summary_path, summary)

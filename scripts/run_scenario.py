@@ -62,8 +62,12 @@ def main() -> None:
         "epoch_metrics_path": str(sdir / "model" / "epoch_metrics.csv"),
         "dataset_path": None,
         "epochs": epochs,
+        "selected_features": [],
+        "feature_importance_path": str(sdir / "model" / "feature_importance.json"),
+        "split_metadata_path": str(sdir / "model" / "split_metadata.json"),
     }
 
+    (sdir / "status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
     try:
         print(f"[{scenario}] scenario started", flush=True)
         csv = _resolve_dataset_path(scenario, args.dataset)
@@ -92,6 +96,22 @@ def main() -> None:
             ]
         )
         print(f"[{scenario}] training done", flush=True)
+
+        features_path = sdir / "model" / "features.json"
+        if features_path.exists():
+            status["selected_features"] = json.loads(features_path.read_text(encoding="utf-8"))
+
+        split_meta_path = sdir / "model" / "split_metadata.json"
+        if split_meta_path.exists():
+            status["split_metadata"] = json.loads(split_meta_path.read_text(encoding="utf-8"))
+
+        cfg_path = sdir / "model" / "config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            status["model_backend"] = cfg.get("model_backend")
+            status["logical_profile"] = cfg.get("logical_profile")
+            status["profile_note"] = cfg.get("profile_note")
+            status["seq_len"] = cfg.get("seq_len")
 
         print(f"[{scenario}] prediction started", flush=True)
         run(
