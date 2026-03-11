@@ -64,6 +64,7 @@ def main() -> None:
         "epochs": epochs,
         "selected_features": [],
         "feature_importance_path": str(sdir / "model" / "feature_importance.json"),
+        "split_metadata_path": str(sdir / "model" / "split_metadata.json"),
     }
 
     try:
@@ -98,6 +99,10 @@ def main() -> None:
         features_path = sdir / "model" / "features.json"
         if features_path.exists():
             status["selected_features"] = json.loads(features_path.read_text(encoding="utf-8"))
+
+        split_meta_path = sdir / "model" / "split_metadata.json"
+        if split_meta_path.exists():
+            status["split_metadata"] = json.loads(split_meta_path.read_text(encoding="utf-8"))
 
         cfg_path = sdir / "model" / "config.json"
         if cfg_path.exists():

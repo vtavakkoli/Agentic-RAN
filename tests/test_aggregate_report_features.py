@@ -23,6 +23,7 @@ def test_aggregate_report_handles_feature_and_new_metrics(tmp_path, monkeypatch)
                 "metrics_path": str(model_dir / "metrics.json"),
                 "preds_path": str(sdir / "preds.csv"),
                 "dataset_path": "",
+                "split_metadata": {"train_start_index": 0, "train_end_index": 5, "val_start_index": 6, "val_end_index": 7, "test_start_index": 8, "test_end_index": 9, "train_rows": 6, "val_rows": 2, "test_rows": 2, "train_pct": 0.6, "val_pct": 0.2, "test_pct": 0.2},
             }
         ),
         encoding="utf-8",
@@ -36,6 +37,7 @@ def test_aggregate_report_handles_feature_and_new_metrics(tmp_path, monkeypatch)
                 "profile_note": "note",
                 "features": ["dl_cqi", "ul_sinr"],
                 "epochs": 1,
+                "split_metadata": {"train_start_index": 0, "train_end_index": 5, "val_start_index": 6, "val_end_index": 7, "test_start_index": 8, "test_end_index": 9, "train_rows": 6, "val_rows": 2, "test_rows": 2, "train_pct": 0.6, "val_pct": 0.2, "test_pct": 0.2},
             }
         ),
         encoding="utf-8",
@@ -62,6 +64,8 @@ def test_aggregate_report_handles_feature_and_new_metrics(tmp_path, monkeypatch)
     assert "Global Feature Importance" in out
     assert "sMAPE" in out
     assert "wMAPE" in out
+    assert "Chronological Time-Series Split" in out
 
+    assert Path("results/final/split_timeline.png").exists()
     status_df = pd.read_csv("results/final/scenario_status.csv")
     assert pd.notna(status_df.loc[0, "benchmark_score"]) if "benchmark_score" in status_df.columns else True

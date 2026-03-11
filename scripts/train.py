@@ -16,8 +16,9 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from oran_sim.config import FEATURE_ORDER, SCENARIOS
 from oran_sim.feature_selection import rank_features_by_importance, select_top_k_features, write_feature_importance_artifacts
 from oran_sim.model import build_model, get_model_metadata
-from oran_sim.sequence_data import make_sequences, sort_by_time
+from oran_sim.sequence_data import make_sequences
 from oran_sim.temporal import TemporalSpec, build_temporal_model, predict_temporal_model, train_temporal_model
+from oran_sim.splitting import build_split_metadata, chronological_split, sort_split
 
 
 def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
@@ -35,7 +36,7 @@ def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     }
 
 
-def _load_splits(csv: Path, seed: int, temporal: bool) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def _load_splits(csv: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     root = csv.parent
     stem = csv.stem
     train_path = root / f"{stem}_train.csv"
@@ -43,22 +44,18 @@ def _load_splits(csv: Path, seed: int, temporal: bool) -> tuple[pd.DataFrame, pd
     test_path = root / f"{stem}_test.csv"
 
     if train_path.exists() and val_path.exists() and test_path.exists():
-        train_df = pd.read_csv(train_path)
-        val_df = pd.read_csv(val_path)
-        test_df = pd.read_csv(test_path)
+        train_df = sort_split(pd.read_csv(train_path))
+        val_df = sort_split(pd.read_csv(val_path))
+        test_df = sort_split(pd.read_csv(test_path))
+        split_meta = build_split_metadata(train_df, val_df, test_df)
     else:
         full = pd.read_csv(csv)
-        if temporal:
-            full = sort_by_time(full)
-        else:
-            full = full.sample(frac=1.0, random_state=seed).reset_index(drop=True)
-        n = len(full)
-        a, b = int(0.6 * n), int(0.9 * n)
-        train_df, val_df, test_df = full.iloc[:a].copy(), full.iloc[a:b].copy(), full.iloc[b:].copy()
+        train_df, val_df, test_df, split_meta = chronological_split(full, train_ratio=0.6, val_ratio=0.3, test_ratio=0.1)
+        train_df.to_csv(train_path, index=False)
+        val_df.to_csv(val_path, index=False)
+        test_df.to_csv(test_path, index=False)
 
-    if temporal:
-        return sort_by_time(train_df), sort_by_time(val_df), sort_by_time(test_df)
-    return train_df, val_df, test_df
+    return train_df, val_df, test_df, split_meta
 
 
 def _prepare_tabular_preprocessor(features: list[str]) -> ColumnTransformer:
@@ -88,7 +85,7 @@ def main() -> None:
     is_temporal = bool(scenario_cfg and scenario_cfg.kind == "temporal")
 
     csv = Path(args.csv)
-    train_df, val_df, test_df = _load_splits(csv, args.seed, is_temporal)
+    train_df, val_df, test_df, split_meta = _load_splits(csv)
 
     candidate_features = [c for c in FEATURE_ORDER if c in train_df.columns]
     importance_df = rank_features_by_importance(train_df, candidate_features, random_state=args.seed)
@@ -171,6 +168,7 @@ def main() -> None:
         write_feature_importance_artifacts(importance_df, json_path=Path("results") / "feature_importance.json", csv_path=Path("results") / "feature_importance.csv")
         write_feature_importance_artifacts(importance_df, json_path=out_dir / "feature_importance.json", csv_path=out_dir / "feature_importance.csv")
 
+        (out_dir / "split_metadata.json").write_text(json.dumps(split_meta, indent=2), encoding="utf-8")
         torch.save(model.state_dict(), out_dir / "temporal_model.pt")
         joblib.dump(scaler, out_dir / "temporal_scaler.joblib")
         (out_dir / "temporal_spec.json").write_text(json.dumps(spec.__dict__, indent=2), encoding="utf-8")
@@ -194,6 +192,7 @@ def main() -> None:
                     "requested_seq_len": requested_seq_len,
                     "temporal": True,
                     "input_shape": [int(seq_len), int(len(features))],
+                    "split_metadata": split_meta,
                 },
                 indent=2,
             ),
@@ -239,6 +238,7 @@ def main() -> None:
         out_dir.mkdir(parents=True, exist_ok=True)
         write_feature_importance_artifacts(importance_df, json_path=Path("results") / "feature_importance.json", csv_path=Path("results") / "feature_importance.csv")
         write_feature_importance_artifacts(importance_df, json_path=out_dir / "feature_importance.json", csv_path=out_dir / "feature_importance.csv")
+        (out_dir / "split_metadata.json").write_text(json.dumps(split_meta, indent=2), encoding="utf-8")
         joblib.dump(pipe, out_dir / "model.joblib")
         (out_dir / "features.json").write_text(json.dumps(features, indent=2), encoding="utf-8")
         (out_dir / "config.json").write_text(
@@ -255,6 +255,7 @@ def main() -> None:
                     "feature_selection": "random_forest_importance_top_k",
                     "epochs": epochs,
                     "temporal": False,
+                    "split_metadata": split_meta,
                 },
                 indent=2,
             ),
@@ -264,6 +265,7 @@ def main() -> None:
         pd.DataFrame(epoch_rows).to_csv(out_dir / "epoch_metrics.csv", index=False)
 
     print(f"train_rows={len(train_df)} val_rows={len(val_df)} test_rows={len(test_df)}")
+    print(f"split_meta={split_meta}")
 
 
 if __name__ == "__main__":

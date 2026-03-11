@@ -44,18 +44,89 @@ def _prepare_preds_for_plot(preds: pd.DataFrame) -> pd.DataFrame:
         return preds.sort_values("time_ms").reset_index(drop=True)
     return preds.reset_index(drop=True)
 
-def _build_timeseries_chart(preds: pd.DataFrame, scenario: str) -> str:
+def _build_timeseries_chart(preds: pd.DataFrame, scenario: str, split_meta: dict | None = None) -> str:
     sorted_preds = _prepare_preds_for_plot(preds)
     fig, ax = plt.subplots(figsize=(9, 3))
-    x = sorted_preds["time_ms"] if "time_ms" in sorted_preds.columns else sorted_preds.index
-    ax.plot(x.values, sorted_preds["y_true"].values, label="y_true", linewidth=1.6)
-    ax.plot(x.values, sorted_preds["y_pred"].values, label="y_pred", linewidth=1.2)
-    ax.set_title(f"{scenario}: y_true/y_pred vs timestamp")
-    ax.set_xlabel("timestamp")
-    ax.legend(loc="best")
+
+    if split_meta:
+        tr_s = split_meta.get("train_start_index", 0)
+        tr_e = split_meta.get("train_end_index", -1)
+        va_s = split_meta.get("val_start_index", 0)
+        va_e = split_meta.get("val_end_index", -1)
+        te_s = split_meta.get("test_start_index", 0)
+        te_e = split_meta.get("test_end_index", len(sorted_preds) - 1)
+
+        full_x = np.arange(int(max(te_e + 1, len(sorted_preds))))
+        y_true_full = np.full(full_x.shape, np.nan, dtype=float)
+        y_pred_full = np.full(full_x.shape, np.nan, dtype=float)
+        test_slice = slice(int(te_s), int(min(te_s + len(sorted_preds), len(full_x))))
+        n_fill = test_slice.stop - test_slice.start
+        y_true_full[test_slice] = sorted_preds["y_true"].values[:n_fill]
+        y_pred_full[test_slice] = sorted_preds["y_pred"].values[:n_fill]
+
+        ax.axvspan(tr_s, tr_e, alpha=0.15, color="#2ca02c", label="Train region")
+        ax.axvspan(va_s, va_e, alpha=0.15, color="#ff7f0e", label="Validation region")
+        ax.axvspan(te_s, te_e, alpha=0.15, color="#1f77b4", label="Test region")
+        ax.axvline(tr_e, color="#2ca02c", linestyle="--", linewidth=1.2)
+        ax.axvline(va_e, color="#ff7f0e", linestyle="--", linewidth=1.2)
+
+        ax.plot(full_x, y_true_full, label="y_true (test window)", linewidth=1.4, color="black")
+        ax.plot(full_x, y_pred_full, label="y_pred (test window)", linewidth=1.1, color="red")
+        ax.set_xlabel("global row index")
+    else:
+        x = sorted_preds["time_ms"] if "time_ms" in sorted_preds.columns else sorted_preds.index
+        ax.plot(x.values, sorted_preds["y_true"].values, label="y_true", linewidth=1.6)
+        ax.plot(x.values, sorted_preds["y_pred"].values, label="y_pred", linewidth=1.2)
+        ax.set_xlabel("timestamp")
+
+    ax.set_title(f"{scenario}: predictions with chronological split boundaries")
+    ax.legend(loc="best", fontsize=8)
     img = _fig_to_base64(fig)
     plt.close(fig)
     return img
+
+
+def _build_split_timeline(split_meta: dict, out_path: Path) -> str:
+    fig, ax = plt.subplots(figsize=(9, 1.8))
+    tr = int(split_meta.get("train_rows", 0))
+    va = int(split_meta.get("val_rows", 0))
+    te = int(split_meta.get("test_rows", 0))
+    total = max(tr + va + te, 1)
+
+    left = 0
+    ax.barh([0], [tr], left=left, color="#2ca02c", label="Train")
+    left += tr
+    ax.barh([0], [va], left=left, color="#ff7f0e", label="Validation")
+    left += va
+    ax.barh([0], [te], left=left, color="#1f77b4", label="Test")
+
+    ax.set_xlim(0, total)
+    ax.set_yticks([])
+    ax.set_xlabel("Row index timeline")
+    ax.set_title("| Train | Validation | Test | (chronological split)")
+    ax.legend(loc="upper center", ncol=3)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=140, bbox_inches="tight")
+    img = _fig_to_base64(fig)
+    plt.close(fig)
+    return img
+
+
+def _split_table(split_meta: dict) -> pd.DataFrame:
+    rows = []
+    for split_name, pfx in [("Train", "train"), ("Validation", "val"), ("Test", "test")]:
+        rows.append(
+            {
+                "Split": split_name,
+                "Start index": split_meta.get(f"{pfx}_start_index"),
+                "End index": split_meta.get(f"{pfx}_end_index"),
+                "Start time": split_meta.get(f"{pfx}_start"),
+                "End time": split_meta.get(f"{pfx}_end"),
+                "Rows": split_meta.get(f"{pfx}_rows"),
+                "Percentage": f"{100.0 * float(split_meta.get(f'{pfx}_pct', 0.0)):.1f}%",
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def _build_benchmark_table(df: pd.DataFrame) -> pd.DataFrame:
@@ -171,6 +242,7 @@ def main() -> None:
             "profile_note": status.get("profile_note"),
             "selected_features": ", ".join(status.get("selected_features", [])),
             "seq_len": status.get("seq_len"),
+            "split_metadata": status.get("split_metadata"),
         }
 
         metrics_path = Path(row["metrics_path"])
@@ -188,6 +260,7 @@ def main() -> None:
             row["num_features"] = len(cfg.get("features", []))
             row["epochs"] = cfg.get("epochs", row.get("epochs"))
             row["seq_len"] = cfg.get("seq_len", row.get("seq_len"))
+            row["split_metadata"] = cfg.get("split_metadata", row.get("split_metadata"))
         else:
             row["model_type"] = None
 
@@ -210,7 +283,7 @@ def main() -> None:
             row["mean_abs_error"] = float(preds["abs_error"].mean())
             row["mean_abs_pct_error"] = float(preds["pct_error"].abs().mean())
 
-            model_chart = _build_timeseries_chart(preds, scenario)
+            model_chart = _build_timeseries_chart(preds, scenario, row.get("split_metadata"))
             model_chart_sections.append(f"<h3>{scenario}</h3><img src='data:image/png;base64,{model_chart}'/>")
 
         dpath_str = str(row.get("dataset_path", "")).strip()
@@ -274,21 +347,23 @@ def main() -> None:
         comp_df = comp_df.merge(benchmark_df[["scenario", "benchmark_score"]], on="scenario", how="left")
     comp_df.to_csv(out_dir / "scenario_status.csv", index=False)
 
+    split_meta = None
+    for row in rows:
+        if row.get("split_metadata"):
+            split_meta = row["split_metadata"]
+            break
+    split_table_html = "<p>No split metadata available.</p>"
+    split_timeline_html = "<p>No split timeline available.</p>"
+    if split_meta:
+        split_table_html = _split_table(split_meta).to_html(index=False)
+        split_timeline_html = f"<img src='data:image/png;base64,{_build_split_timeline(split_meta, out_dir / 'split_timeline.png')}'/>"
+
     feature_importance_path = Path("results/feature_importance.json")
     feature_importance_html = "<p>Feature importance artifact not found.</p>"
     if not feature_importance_path.exists():
         candidates = sorted(Path("results/scenarios").glob("*/model/feature_importance.json"))
         if candidates:
             feature_importance_path = candidates[0]
-    if feature_importance_path.exists():
-        feature_importance_payload = json.loads(feature_importance_path.read_text(encoding="utf-8"))
-        feature_importance_df = pd.DataFrame(feature_importance_payload.get("feature_importance", []))
-        if not feature_importance_df.empty:
-            feature_importance_html = feature_importance_df.to_html(index=False)
-
-
-    feature_importance_path = Path("results/feature_importance.json")
-    feature_importance_html = "<p>Feature importance artifact not found.</p>"
     if feature_importance_path.exists():
         feature_importance_payload = json.loads(feature_importance_path.read_text(encoding="utf-8"))
         feature_importance_df = pd.DataFrame(feature_importance_payload.get("feature_importance", []))
@@ -306,6 +381,11 @@ def main() -> None:
     {table_df.to_html(index=False)}
     <h2>Benchmark Leaderboard</h2>
     {benchmark_df.to_html(index=False) if not benchmark_df.empty else '<p>No benchmark-ready metrics available.</p>'}
+    <h2>Chronological Time-Series Split</h2>
+    <p>All experiments use contiguous chronological blocks only: | Train | Validation | Test |. No random shuffling is used in the official benchmark path.</p>
+    {split_table_html}
+    {split_timeline_html}
+    <p>Temporal windows are built from past values only; validation/test windows do not use future labels. Feature importance is computed on the training split only.</p>
     <h2>Global Feature Importance (train-only Random Forest)</h2>
     {feature_importance_html}
     <h2>Model Predictions vs Ground Truth (timestamp axis)</h2>

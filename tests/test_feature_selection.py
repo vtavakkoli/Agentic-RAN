@@ -62,4 +62,6 @@ def test_feature_importance_file_generation_and_selected_features_in_status(tmp_
     assert status.get("model_backend") == "Ridge"
     assert status.get("logical_profile") == "tabular_baseline"
     assert (sdir / "model" / "feature_importance.json").exists()
+    assert (sdir / "model" / "split_metadata.json").exists()
+    assert "split_metadata" in status
     assert Path("results/feature_importance.json").exists()
