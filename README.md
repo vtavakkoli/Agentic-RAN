@@ -16,6 +16,13 @@ This repository now supports end-to-end KPM processing with one consistent workf
 python generate_data.py --steps 5000 --input shared_data/dataset-kpm --output shared_data/traffic_data.csv
 ```
 
+Madrid LTE Zone I (frequencies `f796`, `f1815`, `f2650`) is also supported:
+```bash
+python generate_data.py --steps 5000 --input dataset/madrid-lte-dataset/zoneI --output shared_data/traffic_data.csv
+```
+This produces aligned per-second features such as:
+`downlink_f796`, `uplink_f796`, `users_f796`, `downlink_f1815`, `uplink_f1815`, `users_f1815`, `downlink_f2650`, `uplink_f2650`, `users_f2650`.
+
 ### Train
 ```bash
 python -m scripts.train --csv shared_data/traffic_data.csv --out_dir results/model --seed 42

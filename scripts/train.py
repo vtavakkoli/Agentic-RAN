@@ -58,9 +58,9 @@ def _load_splits(csv: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, d
     return train_df, val_df, test_df, split_meta
 
 
-def _prepare_tabular_preprocessor(features: list[str]) -> ColumnTransformer:
-    num_features = [c for c in features if c != "scheduling_policy"]
-    cat_features = [c for c in features if c == "scheduling_policy"]
+def _prepare_tabular_preprocessor(features: list[str], train_df: pd.DataFrame) -> ColumnTransformer:
+    num_features = [c for c in features if pd.api.types.is_numeric_dtype(train_df[c])]
+    cat_features = [c for c in features if c not in num_features]
     return ColumnTransformer(
         transformers=[
             ("num", StandardScaler(), num_features),
@@ -88,6 +88,9 @@ def main() -> None:
     train_df, val_df, test_df, split_meta = _load_splits(csv)
 
     candidate_features = [c for c in FEATURE_ORDER if c in train_df.columns]
+    if not candidate_features:
+        skip = {"target", "time_ms", "timestamp", "reservation"}
+        candidate_features = [c for c in train_df.columns if c not in skip]
     importance_df = rank_features_by_importance(train_df, candidate_features, random_state=args.seed)
     feature_count = args.feature_count if args.feature_count is not None else len(candidate_features)
     features = select_top_k_features(importance_df, min(feature_count, len(candidate_features)))
@@ -201,7 +204,7 @@ def main() -> None:
         (out_dir / "metrics.json").write_text(json.dumps(final_metrics, indent=2), encoding="utf-8")
         pd.DataFrame(epoch_rows).to_csv(out_dir / "epoch_metrics.csv", index=False)
     else:
-        pre = _prepare_tabular_preprocessor(features)
+        pre = _prepare_tabular_preprocessor(features, train_df)
         model = build_model(args.model, args.seed)
         pipe = Pipeline([("pre", pre), ("model", model)])
         x_train, y_train = train_df[features], train_df["target"].to_numpy()

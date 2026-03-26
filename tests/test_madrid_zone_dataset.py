@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+import pandas as pd
+
+from oran_sim.data import load_timeseries_from_kpm
+
+
+ZONE_I = Path("dataset/madrid-lte-dataset/zoneI")
+
+
+def test_load_timeseries_from_madrid_zone_i() -> None:
+    df = load_timeseries_from_kpm(ZONE_I, n_steps=64, verbose=False)
+    assert len(df) == 64
+    assert "traffic_load" in df.columns
+    assert "num_ues" in df.columns
+    assert set(df["reservation"].unique()).issubset({"f796", "f1815", "f2650"})
+    assert df["traffic_load"].astype(float).sum() > 0
+    assert df["num_ues"].astype(float).max() > 0
+
+
+def test_generate_data_with_madrid_zone_i(tmp_path: Path) -> None:
+    out_csv = tmp_path / "traffic_data.csv"
+    subprocess.run(
+        [
+            sys.executable,
+            "generate_data.py",
+            "--steps",
+            "100",
+            "--input",
+            str(ZONE_I),
+            "--output",
+            str(out_csv),
+            "--seed",
+            "42",
+        ],
+        check=True,
+    )
+
+    df = pd.read_csv(out_csv)
+    assert len(df) == 100
+    assert {"traffic_load", "num_ues", "target"}.issubset(df.columns)
+    assert {"downlink_f796", "uplink_f796", "users_f796"}.issubset(df.columns)
+    assert {"downlink_f1815", "uplink_f1815", "users_f1815"}.issubset(df.columns)
+    assert {"downlink_f2650", "uplink_f2650", "users_f2650"}.issubset(df.columns)
+    assert df["traffic_load"].sum() > 0
+
+
+def test_train_pipeline_with_madrid_generated_data(tmp_path: Path) -> None:
+    csv_path = tmp_path / "traffic_data.csv"
+    out_dir = tmp_path / "model"
+    subprocess.run(
+        [
+            sys.executable,
+            "generate_data.py",
+            "--steps",
+            "200",
+            "--input",
+            str(ZONE_I),
+            "--output",
+            str(csv_path),
+        ],
+        check=True,
+    )
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.train",
+            "--csv",
+            str(csv_path),
+            "--out_dir",
+            str(out_dir),
+            "--model",
+            "lightweight-32",
+            "--epochs",
+            "1",
+        ],
+        check=True,
+    )
+    assert (out_dir / "model.joblib").exists()
+    assert (out_dir / "features.json").exists()

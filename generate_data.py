@@ -13,6 +13,83 @@ from oran_sim.data import load_timeseries_from_kpm, write_json
 from oran_sim.splitting import chronological_split
 
 
+def _is_madrid_zone_layout(root: Path) -> bool:
+    freq_dirs = [p for p in root.glob("f*") if p.is_dir()]
+    if not freq_dirs:
+        return False
+    return any(list(fd.glob("downlink_*.csv")) for fd in freq_dirs)
+
+
+def _load_madrid_zone_wide(root: Path) -> pd.DataFrame:
+    freq_dirs = sorted([p for p in root.glob("f*") if p.is_dir()])
+    rows = []
+    per_freq = {}
+
+    for freq_dir in freq_dirs:
+        freq = freq_dir.name
+        dl_path = next(iter(sorted(freq_dir.glob("downlink_*.csv"))), None)
+        ul_path = next(iter(sorted(freq_dir.glob("uplink_*.csv"))), None)
+        users_path = next(iter(sorted(freq_dir.glob("users_*.csv"))), None)
+        if dl_path is None:
+            continue
+
+        dl = pd.read_csv(dl_path)
+        dl["second"] = np.floor(pd.to_numeric(dl["timestamp"], errors="coerce")).astype("Int64")
+        dl["tbs_sum"] = pd.to_numeric(dl["tbs_sum"], errors="coerce")
+        dl = dl.dropna(subset=["second"]).groupby("second", as_index=False)["tbs_sum"].sum()
+        dl = dl.rename(columns={"tbs_sum": f"downlink_{freq}"})
+
+        ul = pd.DataFrame(columns=["second", f"uplink_{freq}"])
+        if ul_path is not None:
+            ul_tmp = pd.read_csv(ul_path)
+            ul_tmp["second"] = np.floor(pd.to_numeric(ul_tmp["timestamp"], errors="coerce")).astype("Int64")
+            ul_tmp["tbs_sum"] = pd.to_numeric(ul_tmp["tbs_sum"], errors="coerce")
+            ul_tmp = ul_tmp.dropna(subset=["second"]).groupby("second", as_index=False)["tbs_sum"].sum()
+            ul = ul_tmp.rename(columns={"tbs_sum": f"uplink_{freq}"})
+
+        users = pd.DataFrame(columns=["second", f"users_{freq}"])
+        if users_path is not None:
+            user_tmp = pd.read_csv(users_path)
+            user_tmp["second"] = np.floor(pd.to_numeric(user_tmp["timestamp"], errors="coerce")).astype("Int64")
+            user_tmp["user_unique"] = pd.to_numeric(user_tmp["user_unique"], errors="coerce")
+            user_tmp = user_tmp.dropna(subset=["second"]).groupby("second", as_index=False)["user_unique"].mean()
+            users = user_tmp.rename(columns={"user_unique": f"users_{freq}"})
+
+        merged = dl.merge(ul, on="second", how="outer").merge(users, on="second", how="outer").sort_values("second")
+        per_freq[freq] = merged
+        rows.extend(merged["second"].dropna().astype(int).tolist())
+
+    if not per_freq:
+        raise RuntimeError(f"No usable frequency data found in {root}")
+
+    all_seconds = pd.DataFrame({"second": sorted(set(rows))})
+    base = all_seconds.copy()
+    for freq in sorted(per_freq.keys()):
+        base = base.merge(per_freq[freq], on="second", how="left")
+
+    for c in base.columns:
+        if c != "second":
+            base[c] = pd.to_numeric(base[c], errors="coerce")
+    base = base.sort_values("second").reset_index(drop=True)
+    feature_cols = [c for c in base.columns if c != "second"]
+    base[feature_cols] = base[feature_cols].ffill().fillna(0.0)
+
+    down_cols = [c for c in base.columns if c.startswith("downlink_f")]
+    up_cols = [c for c in base.columns if c.startswith("uplink_f")]
+    user_cols = [c for c in base.columns if c.startswith("users_f")]
+
+    base["timestamp"] = base["second"].astype(float)
+    base["time_ms"] = (base["second"].astype(float) * 1000.0).astype("int64")
+    base["traffic_load"] = base[down_cols].sum(axis=1) if down_cols else 0.0
+    base["num_ues"] = base[user_cols].sum(axis=1) if user_cols else 0.0
+    base["ul_buffer_bytes"] = base[up_cols].sum(axis=1) if up_cols else 0.0
+    base["dl_buffer_bytes"] = base["traffic_load"]
+    base["scheduling_policy"] = root.name
+    base["reservation"] = root.name
+
+    return base
+
+
 def _build_target(df: pd.DataFrame, target: str, horizon_steps: int) -> pd.DataFrame:
     horizon = max(1, horizon_steps)
     shifted = df["traffic_load"].shift(-horizon)
@@ -66,10 +143,16 @@ def main() -> None:
     args = parser.parse_args()
 
     required_rows = args.steps + max(1, int(args.horizon_steps))
-    base = load_timeseries_from_kpm(args.input, n_steps=required_rows, verbose=True)
+    input_path = Path(args.input)
+    if _is_madrid_zone_layout(input_path):
+        base = _load_madrid_zone_wide(input_path)
+    else:
+        base = load_timeseries_from_kpm(args.input, n_steps=required_rows, verbose=True)
     base = _build_target(base, args.target, args.horizon_steps)
 
-    keep_cols = ["time_ms", "reservation", "traffic_load"] + FEATURE_ORDER + ["target"]
+    keep_cols = ["timestamp", "time_ms", "reservation", "traffic_load"]
+    keep_cols += sorted([c for c in base.columns if c.startswith("downlink_f") or c.startswith("uplink_f") or c.startswith("users_f")])
+    keep_cols += FEATURE_ORDER + ["target"]
     for c in keep_cols:
         if c not in base.columns:
             base[c] = 0
