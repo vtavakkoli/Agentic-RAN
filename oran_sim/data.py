@@ -192,51 +192,87 @@ def _scenario_context(exp_dir: Path) -> Dict[str, object]:
     }
 
 
-def load_timeseries_from_kpm(root_dir: str | Path, n_steps: Optional[int] = None, verbose: bool = True) -> pd.DataFrame:
-    root = Path(root_dir)
-    reservations = sorted(root.glob("**/RESERVATION-*"))
-    if not reservations:
-        raise FileNotFoundError(f"No RESERVATION-* directories found under {root}")
+def _load_madrid_lte_zone(root: Path, n_steps: Optional[int], verbose: bool) -> pd.DataFrame:
+    freq_dirs = sorted([p for p in root.glob("f*") if p.is_dir()])
+    if not freq_dirs:
+        raise FileNotFoundError(f"No frequency folders (f*) found under {root}")
 
     frames: List[pd.DataFrame] = []
     remaining = n_steps
     total_used = 0
-    for exp in reservations:
+
+    for freq_dir in freq_dirs:
         if remaining is not None and remaining <= 0:
             break
 
-        bs = _load_bs_metrics(exp)
-        if bs.empty:
+        downlink_path = next(iter(sorted(freq_dir.glob("downlink_*.csv"))), None)
+        uplink_path = next(iter(sorted(freq_dir.glob("uplink_*.csv"))), None)
+        users_path = next(iter(sorted(freq_dir.glob("users_*.csv"))), None)
+        if downlink_path is None:
             continue
-        start = float(bs["time_ms"].min())
-        enb = _load_enb_metrics(exp)
-        ue = _load_ue_metrics(exp, start)
-        flow = _load_flow_metrics(exp, start)
-        merged = bs.sort_values("time_ms").copy()
-        merged["time_ms"] = pd.to_numeric(merged["time_ms"], errors="coerce").astype(float)
 
-        if not enb.empty:
-            enb["time_ms"] = pd.to_numeric(enb["time_ms"], errors="coerce").astype(float)
-            merged = pd.merge_asof(
-                merged.sort_values("time_ms"),
-                enb.sort_values("time_ms"),
-                on="time_ms",
-                direction="nearest",
-                tolerance=300,
-                suffixes=("", "_enb"),
-            )
-        if not ue.empty:
-            ue["time_ms"] = pd.to_numeric(ue["time_ms"], errors="coerce").astype(float)
-            merged = pd.merge_asof(merged.sort_values("time_ms"), ue.sort_values("time_ms"), on="time_ms", direction="nearest", tolerance=300)
-        if not flow.empty:
-            flow["time_ms"] = pd.to_numeric(flow["time_ms"], errors="coerce").astype(float)
-            merged = pd.merge_asof(merged.sort_values("time_ms"), flow.sort_values("time_ms"), on="time_ms", direction="nearest", tolerance=1000)
+        dl = _read_csv(downlink_path, prefer_sep=",")
+        if dl.empty:
+            continue
+        dl.columns = [normalize_column_name(c) for c in dl.columns]
+        if "time" not in dl.columns:
+            continue
+        dl["time"] = pd.to_numeric(dl["time"], errors="coerce")
+        dl["tbs_sum"] = pd.to_numeric(dl.get("tbs_sum"), errors="coerce")
+        dl = dl.dropna(subset=["time"]).sort_values("time")
+        dl["time_ms"] = dl["time"] * 1000.0
+        dl["traffic_load"] = dl["tbs_sum"].fillna(0.0)
+        merged = dl[["time_ms", "traffic_load"]].copy()
 
-        ctx = _scenario_context(exp)
-        for k, v in ctx.items():
-            merged[k] = v
+        if uplink_path is not None:
+            ul = _read_csv(uplink_path, prefer_sep=",")
+            if not ul.empty:
+                ul.columns = [normalize_column_name(c) for c in ul.columns]
+                if "time" not in ul.columns:
+                    ul = pd.DataFrame()
+                if not ul.empty:
+                    ul["time"] = pd.to_numeric(ul["time"], errors="coerce")
+                ul["tbs_sum"] = pd.to_numeric(ul.get("tbs_sum"), errors="coerce")
+                if not ul.empty:
+                    ul = ul.dropna(subset=["time"]).sort_values("time")
+                    ul["time_ms"] = ul["time"] * 1000.0
+                    ul = ul[["time_ms", "tbs_sum"]].rename(columns={"tbs_sum": "ul_buffer_bytes"})
+                    merged = pd.merge_asof(
+                        merged.sort_values("time_ms"),
+                        ul.sort_values("time_ms"),
+                        on="time_ms",
+                        direction="nearest",
+                        tolerance=1500.0,
+                    )
 
-        merged["reservation"] = exp.name
+        if users_path is not None:
+            users = _read_csv(users_path, prefer_sep=",")
+            if not users.empty:
+                users.columns = [normalize_column_name(c) for c in users.columns]
+                if "time" not in users.columns:
+                    users = pd.DataFrame()
+                if not users.empty:
+                    users["time"] = pd.to_numeric(users["time"], errors="coerce")
+                users["user_unique"] = pd.to_numeric(users.get("user_unique"), errors="coerce")
+                if not users.empty:
+                    users = users.dropna(subset=["time"]).sort_values("time")
+                    users["time_ms"] = users["time"] * 1000.0
+                    users = users[["time_ms", "user_unique"]].rename(columns={"user_unique": "num_ues"})
+                    merged = pd.merge_asof(
+                        merged.sort_values("time_ms"),
+                        users.sort_values("time_ms"),
+                        on="time_ms",
+                        direction="nearest",
+                        tolerance=1500.0,
+                    )
+
+        freq_digits = re.findall(r"\d+", freq_dir.name)
+        freq_value = float(freq_digits[0]) if freq_digits else 0.0
+        merged["reservation"] = freq_dir.name
+        merged["slicing_enabled"] = 0.0
+        merged["slice_id"] = freq_value
+        merged["slice_prb"] = 0.0
+        merged["scheduling_policy"] = root.name
 
         fetched_rows = len(merged)
         if remaining is None:
@@ -251,17 +287,88 @@ def load_timeseries_from_kpm(root_dir: str | Path, n_steps: Optional[int] = None
         total_used += used_rows
         if verbose:
             print(
-                f"[DATA] reservation={exp.name} fetched_rows={fetched_rows} "
+                f"[DATA] reservation={freq_dir.name} fetched_rows={fetched_rows} "
                 f"used_rows={used_rows} cumulative_used={total_used}"
             )
 
     if not frames:
-        raise RuntimeError("No usable data parsed from reservations")
+        raise RuntimeError(f"No usable Madrid LTE data parsed from {root}")
 
-    df = pd.concat(frames, ignore_index=True, sort=False)
+    return pd.concat(frames, ignore_index=True, sort=False)
+
+
+def load_timeseries_from_kpm(root_dir: str | Path, n_steps: Optional[int] = None, verbose: bool = True) -> pd.DataFrame:
+    root = Path(root_dir)
+    reservations = sorted(root.glob("**/RESERVATION-*"))
+    if not reservations:
+        df = _load_madrid_lte_zone(root, n_steps=n_steps, verbose=verbose)
+    else:
+        frames: List[pd.DataFrame] = []
+        remaining = n_steps
+        total_used = 0
+        for exp in reservations:
+            if remaining is not None and remaining <= 0:
+                break
+
+            bs = _load_bs_metrics(exp)
+            if bs.empty:
+                continue
+            start = float(bs["time_ms"].min())
+            enb = _load_enb_metrics(exp)
+            ue = _load_ue_metrics(exp, start)
+            flow = _load_flow_metrics(exp, start)
+            merged = bs.sort_values("time_ms").copy()
+            merged["time_ms"] = pd.to_numeric(merged["time_ms"], errors="coerce").astype(float)
+
+            if not enb.empty:
+                enb["time_ms"] = pd.to_numeric(enb["time_ms"], errors="coerce").astype(float)
+                merged = pd.merge_asof(
+                    merged.sort_values("time_ms"),
+                    enb.sort_values("time_ms"),
+                    on="time_ms",
+                    direction="nearest",
+                    tolerance=300,
+                    suffixes=("", "_enb"),
+                )
+            if not ue.empty:
+                ue["time_ms"] = pd.to_numeric(ue["time_ms"], errors="coerce").astype(float)
+                merged = pd.merge_asof(merged.sort_values("time_ms"), ue.sort_values("time_ms"), on="time_ms", direction="nearest", tolerance=300)
+            if not flow.empty:
+                flow["time_ms"] = pd.to_numeric(flow["time_ms"], errors="coerce").astype(float)
+                merged = pd.merge_asof(merged.sort_values("time_ms"), flow.sort_values("time_ms"), on="time_ms", direction="nearest", tolerance=1000)
+
+            ctx = _scenario_context(exp)
+            for k, v in ctx.items():
+                merged[k] = v
+
+            merged["reservation"] = exp.name
+
+            fetched_rows = len(merged)
+            if remaining is None:
+                used_rows = fetched_rows
+                to_append = merged
+            else:
+                used_rows = min(fetched_rows, max(remaining, 0))
+                to_append = merged.iloc[:used_rows].copy()
+                remaining -= used_rows
+
+            frames.append(to_append)
+            total_used += used_rows
+            if verbose:
+                print(
+                    f"[DATA] reservation={exp.name} fetched_rows={fetched_rows} "
+                    f"used_rows={used_rows} cumulative_used={total_used}"
+                )
+
+        if not frames:
+            raise RuntimeError("No usable data parsed from reservations")
+
+        df = pd.concat(frames, ignore_index=True, sort=False)
     df.columns = [normalize_column_name(c) for c in df.columns]
 
-    if "tx_brate_dl_mbps" in df.columns:
+    if "traffic_load" in df.columns:
+        df["traffic_load"] = pd.to_numeric(df["traffic_load"], errors="coerce")
+    elif "tx_brate_dl_mbps" in df.columns:
         df["traffic_load"] = pd.to_numeric(df["tx_brate_dl_mbps"], errors="coerce")
     elif "enb_dl_brate" in df.columns:
         df["traffic_load"] = pd.to_numeric(df["enb_dl_brate"], errors="coerce")
