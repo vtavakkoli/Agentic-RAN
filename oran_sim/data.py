@@ -1,0 +1,403 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import numpy as np
+import pandas as pd
+
+from oran_sim.config import FEATURE_ORDER
+
+REQUIRED_OUTPUT_COLUMNS = [
+    "time_ms",
+    "traffic_load",
+    "num_ues",
+    "dl_mcs",
+    "ul_mcs",
+    "dl_cqi",
+    "ul_sinr",
+    "ul_rssi",
+    "dl_buffer_bytes",
+    "ul_buffer_bytes",
+    "sum_requested_prbs",
+    "sum_granted_prbs",
+    "tx_errors_dl_pct",
+    "rx_errors_ul_pct",
+    "slicing_enabled",
+    "slice_id",
+    "slice_prb",
+    "scheduling_policy",
+    "latency_ms",
+    "jitter_ms",
+    "payload_bytes",
+]
+
+_COL_ALIASES = {
+    "nof_ue": "num_ues",
+    "dl_brate": "enb_dl_brate",
+    "tx_brate_downlink_mbps": "tx_brate_dl_mbps",
+    "txbrate_downlink_mbps": "tx_brate_dl_mbps",
+    "tx_brate_uplink_mbps": "tx_brate_ul_mbps",
+    "tx_errors_dl": "tx_errors_dl_pct",
+    "rx_errors_ul": "rx_errors_ul_pct",
+    "ul_buffer": "ul_buffer_bytes",
+    "dl_buffer": "dl_buffer_bytes",
+    "timestamp": "time",
+    "tx_errors_downlink_pct": "tx_errors_dl_pct",
+    "rx_errors_uplink_pct": "rx_errors_ul_pct",
+    "tx_brate_downlink_mbps": "tx_brate_dl_mbps",
+}
+
+
+def normalize_column_name(name: str) -> str:
+    col = str(name).strip().lower()
+    col = col.replace("%", "pct").replace("/", "_")
+    col = col.replace("[", "_").replace("]", "")
+    col = col.replace("(", "_").replace(")", "")
+    col = col.replace("-", "_").replace(" ", "_")
+    col = re.sub(r"_+", "_", col).strip("_")
+    return _COL_ALIASES.get(col, col)
+
+
+def _read_csv(path: Path, prefer_sep: str = ",") -> pd.DataFrame:
+    if path.stat().st_size == 0:
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(path, sep=prefer_sep)
+        if df.shape[1] > 1:
+            return df
+    except Exception:
+        pass
+    return pd.read_csv(path, sep=None, engine="python")
+
+
+def _load_bs_metrics(exp_dir: Path) -> pd.DataFrame:
+    bs_files = sorted(f for f in (exp_dir / "bs").glob("*_metrics.csv") if f.name != "enb_metrics.csv")
+    frames: List[pd.DataFrame] = []
+    for f in bs_files:
+        df = _read_csv(f, prefer_sep=",")
+        if df.empty:
+            continue
+        df = df.loc[:, [str(c).strip() != "" for c in df.columns]].copy()
+        df.columns = [normalize_column_name(c) for c in df.columns]
+        if "time" not in df.columns:
+            continue
+        df = df.loc[:, ~df.columns.str.startswith("unnamed")]
+        df["time"] = pd.to_numeric(df["time"], errors="coerce")
+        df = df.dropna(subset=["time"]).sort_values("time")
+        frames.append(df)
+
+    if not frames:
+        return pd.DataFrame(columns=["time_ms"])
+
+    all_bs = pd.concat(frames, ignore_index=True, sort=False)
+    numeric_cols = [c for c in all_bs.columns if c != "time"]
+    for col in numeric_cols:
+        all_bs[col] = pd.to_numeric(all_bs[col], errors="coerce")
+    agg = all_bs.groupby("time", as_index=False).mean(numeric_only=True)
+    agg = agg.rename(columns={"time": "time_ms"})
+    return agg
+
+
+def _load_enb_metrics(exp_dir: Path) -> pd.DataFrame:
+    path = exp_dir / "bs" / "enb_metrics.csv"
+    if not path.exists():
+        path = exp_dir / "enb_metrics.csv"
+    if not path.exists():
+        return pd.DataFrame(columns=["time_ms"])
+    df = _read_csv(path, prefer_sep=",")
+    if df.empty:
+        return pd.DataFrame(columns=["time_ms"])
+    df.columns = [normalize_column_name(c) for c in df.columns]
+    if "time" not in df.columns:
+        return pd.DataFrame(columns=["time_ms"])
+    df["time"] = pd.to_numeric(df["time"], errors="coerce")
+    df = df.dropna(subset=["time"]).sort_values("time")
+    for col in df.columns:
+        if col != "time":
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df.rename(columns={"time": "time_ms"})
+
+
+def _load_ue_metrics(exp_dir: Path, start_time_ms: float) -> pd.DataFrame:
+    ue_files = sorted(exp_dir.glob("ue_*/ue_metrics.csv"))
+    frames: List[pd.DataFrame] = []
+    for f in ue_files:
+        df = _read_csv(f, prefer_sep=";")
+        if df.empty:
+            continue
+        df.columns = [normalize_column_name(c) for c in df.columns]
+        if "time" not in df.columns:
+            continue
+        keep = [c for c in ["time", "dl_mcs", "ul_mcs", "dl_cqi", "ul_sinr", "ul_rssi"] if c in df.columns]
+        if len(keep) <= 1:
+            continue
+        sub = df[keep].copy()
+        for col in keep:
+            sub[col] = pd.to_numeric(sub[col], errors="coerce")
+        sub["time_ms"] = start_time_ms + sub["time"]
+        sub = sub.drop(columns=["time"])
+        frames.append(sub)
+    if not frames:
+        return pd.DataFrame(columns=["time_ms"])
+    ue = pd.concat(frames, ignore_index=True, sort=False)
+    return ue.groupby("time_ms", as_index=False).mean(numeric_only=True)
+
+
+def _load_flow_metrics(exp_dir: Path, start_time_ms: float) -> pd.DataFrame:
+    flow_files = sorted(exp_dir.glob("**/*flow*.csv"))
+    frames: List[pd.DataFrame] = []
+    for f in flow_files:
+        df = _read_csv(f, prefer_sep=",")
+        if df.empty:
+            continue
+        df.columns = [normalize_column_name(c) for c in df.columns]
+        sent_col = next((c for c in df.columns if "sent_time" in c), None)
+        recv_col = next((c for c in df.columns if "received_time" in c), None)
+        payload_col = next((c for c in df.columns if "payload" in c), None)
+        if not sent_col or not recv_col:
+            continue
+        sent = pd.to_numeric(df[sent_col], errors="coerce")
+        recv = pd.to_numeric(df[recv_col], errors="coerce")
+        latency_ms = (recv - sent) * 1000.0
+        time_ms = np.where(recv < 1e9, start_time_ms + recv * 1000.0, recv)
+        sub = pd.DataFrame({"time_ms": time_ms, "latency_ms": latency_ms})
+        if payload_col:
+            sub["payload_bytes"] = pd.to_numeric(df[payload_col], errors="coerce")
+        frames.append(sub)
+
+    if not frames:
+        return pd.DataFrame(columns=["time_ms", "latency_ms", "jitter_ms", "payload_bytes"])
+
+    flow = pd.concat(frames, ignore_index=True, sort=False)
+    flow = flow.dropna(subset=["time_ms"]).sort_values("time_ms")
+    flow["jitter_ms"] = flow["latency_ms"].diff().abs()
+    return flow.groupby("time_ms", as_index=False).mean(numeric_only=True)
+
+
+def _scenario_context(exp_dir: Path) -> Dict[str, object]:
+    scheduling_name = exp_dir.parent.name
+    slicing_name = exp_dir.parent.parent.name if exp_dir.parent.parent else "slicing_unknown"
+    slice_digits = re.findall(r"\d+", slicing_name)
+    slice_prb = int(slice_digits[0]) if slice_digits else 0
+    slice_id = int(hashlib.md5(slicing_name.encode("utf-8")).hexdigest()[:6], 16) % 1000
+    return {
+        "slicing_enabled": 1.0 if "slicing" in slicing_name else 0.0,
+        "slice_id": float(slice_id),
+        "slice_prb": float(slice_prb),
+        "scheduling_policy": scheduling_name.replace("scheduling_", ""),
+    }
+
+
+def _load_madrid_lte_zone(root: Path, n_steps: Optional[int], verbose: bool) -> pd.DataFrame:
+    freq_dirs = sorted([p for p in root.glob("f*") if p.is_dir()])
+    if not freq_dirs:
+        raise FileNotFoundError(f"No frequency folders (f*) found under {root}")
+
+    frames: List[pd.DataFrame] = []
+    remaining = n_steps
+    total_used = 0
+
+    for freq_dir in freq_dirs:
+        if remaining is not None and remaining <= 0:
+            break
+
+        downlink_path = next(iter(sorted(freq_dir.glob("downlink_*.csv"))), None)
+        uplink_path = next(iter(sorted(freq_dir.glob("uplink_*.csv"))), None)
+        users_path = next(iter(sorted(freq_dir.glob("users_*.csv"))), None)
+        if downlink_path is None:
+            continue
+
+        dl = _read_csv(downlink_path, prefer_sep=",")
+        if dl.empty:
+            continue
+        dl.columns = [normalize_column_name(c) for c in dl.columns]
+        if "time" not in dl.columns:
+            continue
+        dl["time"] = pd.to_numeric(dl["time"], errors="coerce")
+        dl["tbs_sum"] = pd.to_numeric(dl.get("tbs_sum"), errors="coerce")
+        dl = dl.dropna(subset=["time"]).sort_values("time")
+        dl["time_ms"] = dl["time"] * 1000.0
+        dl["traffic_load"] = dl["tbs_sum"].fillna(0.0)
+        merged = dl[["time_ms", "traffic_load"]].copy()
+
+        if uplink_path is not None:
+            ul = _read_csv(uplink_path, prefer_sep=",")
+            if not ul.empty:
+                ul.columns = [normalize_column_name(c) for c in ul.columns]
+                if "time" not in ul.columns:
+                    ul = pd.DataFrame()
+                if not ul.empty:
+                    ul["time"] = pd.to_numeric(ul["time"], errors="coerce")
+                ul["tbs_sum"] = pd.to_numeric(ul.get("tbs_sum"), errors="coerce")
+                if not ul.empty:
+                    ul = ul.dropna(subset=["time"]).sort_values("time")
+                    ul["time_ms"] = ul["time"] * 1000.0
+                    ul = ul[["time_ms", "tbs_sum"]].rename(columns={"tbs_sum": "ul_buffer_bytes"})
+                    merged = pd.merge_asof(
+                        merged.sort_values("time_ms"),
+                        ul.sort_values("time_ms"),
+                        on="time_ms",
+                        direction="nearest",
+                        tolerance=1500.0,
+                    )
+
+        if users_path is not None:
+            users = _read_csv(users_path, prefer_sep=",")
+            if not users.empty:
+                users.columns = [normalize_column_name(c) for c in users.columns]
+                if "time" not in users.columns:
+                    users = pd.DataFrame()
+                if not users.empty:
+                    users["time"] = pd.to_numeric(users["time"], errors="coerce")
+                users["user_unique"] = pd.to_numeric(users.get("user_unique"), errors="coerce")
+                if not users.empty:
+                    users = users.dropna(subset=["time"]).sort_values("time")
+                    users["time_ms"] = users["time"] * 1000.0
+                    users = users[["time_ms", "user_unique"]].rename(columns={"user_unique": "num_ues"})
+                    merged = pd.merge_asof(
+                        merged.sort_values("time_ms"),
+                        users.sort_values("time_ms"),
+                        on="time_ms",
+                        direction="nearest",
+                        tolerance=1500.0,
+                    )
+
+        freq_digits = re.findall(r"\d+", freq_dir.name)
+        freq_value = float(freq_digits[0]) if freq_digits else 0.0
+        merged["reservation"] = freq_dir.name
+        merged["slicing_enabled"] = 0.0
+        merged["slice_id"] = freq_value
+        merged["slice_prb"] = 0.0
+        merged["scheduling_policy"] = root.name
+
+        fetched_rows = len(merged)
+        if remaining is None:
+            used_rows = fetched_rows
+            to_append = merged
+        else:
+            used_rows = min(fetched_rows, max(remaining, 0))
+            to_append = merged.iloc[:used_rows].copy()
+            remaining -= used_rows
+
+        frames.append(to_append)
+        total_used += used_rows
+        if verbose:
+            print(
+                f"[DATA] reservation={freq_dir.name} fetched_rows={fetched_rows} "
+                f"used_rows={used_rows} cumulative_used={total_used}"
+            )
+
+    if not frames:
+        raise RuntimeError(f"No usable Madrid LTE data parsed from {root}")
+
+    return pd.concat(frames, ignore_index=True, sort=False)
+
+
+def load_timeseries_from_kpm(root_dir: str | Path, n_steps: Optional[int] = None, verbose: bool = True) -> pd.DataFrame:
+    root = Path(root_dir)
+    reservations = sorted(root.glob("**/RESERVATION-*"))
+    if not reservations:
+        df = _load_madrid_lte_zone(root, n_steps=n_steps, verbose=verbose)
+    else:
+        frames: List[pd.DataFrame] = []
+        remaining = n_steps
+        total_used = 0
+        for exp in reservations:
+            if remaining is not None and remaining <= 0:
+                break
+
+            bs = _load_bs_metrics(exp)
+            if bs.empty:
+                continue
+            start = float(bs["time_ms"].min())
+            enb = _load_enb_metrics(exp)
+            ue = _load_ue_metrics(exp, start)
+            flow = _load_flow_metrics(exp, start)
+            merged = bs.sort_values("time_ms").copy()
+            merged["time_ms"] = pd.to_numeric(merged["time_ms"], errors="coerce").astype(float)
+
+            if not enb.empty:
+                enb["time_ms"] = pd.to_numeric(enb["time_ms"], errors="coerce").astype(float)
+                merged = pd.merge_asof(
+                    merged.sort_values("time_ms"),
+                    enb.sort_values("time_ms"),
+                    on="time_ms",
+                    direction="nearest",
+                    tolerance=300,
+                    suffixes=("", "_enb"),
+                )
+            if not ue.empty:
+                ue["time_ms"] = pd.to_numeric(ue["time_ms"], errors="coerce").astype(float)
+                merged = pd.merge_asof(merged.sort_values("time_ms"), ue.sort_values("time_ms"), on="time_ms", direction="nearest", tolerance=300)
+            if not flow.empty:
+                flow["time_ms"] = pd.to_numeric(flow["time_ms"], errors="coerce").astype(float)
+                merged = pd.merge_asof(merged.sort_values("time_ms"), flow.sort_values("time_ms"), on="time_ms", direction="nearest", tolerance=1000)
+
+            ctx = _scenario_context(exp)
+            for k, v in ctx.items():
+                merged[k] = v
+
+            merged["reservation"] = exp.name
+
+            fetched_rows = len(merged)
+            if remaining is None:
+                used_rows = fetched_rows
+                to_append = merged
+            else:
+                used_rows = min(fetched_rows, max(remaining, 0))
+                to_append = merged.iloc[:used_rows].copy()
+                remaining -= used_rows
+
+            frames.append(to_append)
+            total_used += used_rows
+            if verbose:
+                print(
+                    f"[DATA] reservation={exp.name} fetched_rows={fetched_rows} "
+                    f"used_rows={used_rows} cumulative_used={total_used}"
+                )
+
+        if not frames:
+            raise RuntimeError("No usable data parsed from reservations")
+
+        df = pd.concat(frames, ignore_index=True, sort=False)
+    df.columns = [normalize_column_name(c) for c in df.columns]
+
+    if "traffic_load" in df.columns:
+        df["traffic_load"] = pd.to_numeric(df["traffic_load"], errors="coerce")
+    elif "tx_brate_dl_mbps" in df.columns:
+        df["traffic_load"] = pd.to_numeric(df["tx_brate_dl_mbps"], errors="coerce")
+    elif "enb_dl_brate" in df.columns:
+        df["traffic_load"] = pd.to_numeric(df["enb_dl_brate"], errors="coerce")
+    else:
+        df["traffic_load"] = 0.0
+
+    for col in REQUIRED_OUTPUT_COLUMNS:
+        if col not in df.columns:
+            df[col] = np.nan
+
+    df["time_ms"] = pd.to_numeric(df["time_ms"], errors="coerce")
+    numeric_cols = [c for c in REQUIRED_OUTPUT_COLUMNS if c not in {"scheduling_policy"}]
+    for c in numeric_cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    df = df.sort_values("time_ms").reset_index(drop=True)
+    df = df[df["time_ms"].notna()]
+    df[numeric_cols] = df[numeric_cols].ffill().fillna(0.0)
+    df["scheduling_policy"] = df["scheduling_policy"].ffill().fillna("unknown")
+    df["time_ms"] = df["time_ms"].astype("int64")
+
+    result_cols = REQUIRED_OUTPUT_COLUMNS + ["reservation"]
+    df = df[result_cols]
+    df = df.drop_duplicates(subset=["time_ms", "reservation"], keep="first")
+    df = df.sort_values("time_ms").reset_index(drop=True)
+
+    return df
+
+
+def write_json(path: Path, payload: Dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
