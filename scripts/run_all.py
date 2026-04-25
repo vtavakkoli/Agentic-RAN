@@ -11,7 +11,7 @@ from scripts.run_scenario import run
 
 
 def prepare_data(max_files: int, rows_per_file: int, max_features: int) -> None:
-    input_dirs = [Path("slice_mixed"), Path("slice_traffic")]
+    input_dirs = [Path("dataset/slice_mixed"), Path("dataset/slice_traffic"), Path("dataset")]
     dataset, _ = build_dataset(
         input_dirs=input_dirs,
         max_files=max_files,
