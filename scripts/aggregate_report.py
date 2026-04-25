@@ -127,7 +127,6 @@ def aggregate(results_root: Path = Path("results")) -> Path:
             "selected_features": ", ".join((metadata or {}).get("selected_features", [])),
             "target_column": (metadata or {}).get("target_column", data_summary.get("target_column", "n/a")),
             "log_target": (metadata or {}).get("log_target", data_summary.get("log_target", False)),
-            "source_files_used": ", ".join(data_summary.get("source_files_used", data_summary.get("files_used", []))),
             "rows_train": data_summary.get("rows_per_split", {}).get("train", "n/a"),
             "rows_val": data_summary.get("rows_per_split", {}).get("val", "n/a"),
             "rows_test": data_summary.get("rows_per_split", {}).get("test", "n/a"),
@@ -245,7 +244,6 @@ def aggregate(results_root: Path = Path("results")) -> Path:
                     "rows_val",
                     "rows_test",
                     "metrics_file_count",
-                    "source_files_used",
                 ]
             ]
         ),
