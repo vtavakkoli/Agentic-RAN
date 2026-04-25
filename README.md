@@ -16,10 +16,10 @@ The proposed method family is **Liquid Dynamics** (represented by `liquid-baseli
 Use `dataset/` as the canonical input location for raw CSV data preparation.
 
 Expected layout:
-- `dataset/slice_mixed/**/*.csv`
-- `dataset/slice_traffic/**/*.csv`
+- `dataset/slice_mixed/**/*_metrics.csv`
+- `dataset/slice_traffic/**/*_metrics.csv`
 
-`prepare_splits.py` also accepts `dataset/` directly and recursively scans CSVs.
+`prepare_splits.py` accepts `dataset/` directly and recursively scans only `*_metrics.csv` files.
 
 ### Tested reference dataset
 Data preparation is tested with the **Colosseum O-RAN COMMAG Dataset** associated with:
@@ -33,7 +33,7 @@ Please cite that paper if you use the dataset in a publication.
   ```bash
   python -m scripts.prepare_splits --target-col "tx_brate downlink [Mbps]"
   ```
-- If `--target-col` is not set, preparation uses known candidates (`target`, `tx_brate downlink [Mbps]`, `dl_brate`, `rx_brate uplink [Mbps]`, `ul_brate`) and finally falls back to the last numeric column.
+- If `--target-col` is not set, preparation defaults to `tx_brate downlink [Mbps]` (or `ratio_granted_req` for URLLC experiments via `--target-col ratio_granted_req`).
 - **Actual source feature names are preserved** (no remapping to `feature_0`, `feature_1`, ...).
 
 ## Requirements
@@ -85,7 +85,7 @@ docker compose up --build run-all
 ```
 
 ## Reproducibility guidance
-- Keep a fixed random seed for data splitting (`split_and_save` uses seed 42 by default).
+- Splits are time-aware and chronological per file (60/10/30 train/val/test).
 - Reuse the same files in `shared_data/splits/` across scenario runs.
 - Pin epochs with `EPOCHS=<N>` when comparing architectures.
 - Preserve run artifacts under `results/<scenario>/` (metrics, metadata, predictions, training logs, plots).

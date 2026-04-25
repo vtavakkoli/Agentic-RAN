@@ -110,6 +110,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         metrics = _read_json(folder / "metrics.json")
         metadata = _read_json(folder / "model_metadata.json")
         status = _read_json(folder / "status.json") or {}
+        data_summary = _read_json(folder / "data_summary.json") or {}
 
         ok = bool(metrics and metadata and status.get("status") == "success")
         row = {
@@ -124,6 +125,13 @@ def aggregate(results_root: Path = Path("results")) -> Path:
             "dataset_rows": (metadata or {}).get("dataset_rows", "n/a"),
             "num_features": (metadata or {}).get("num_features", "n/a"),
             "selected_features": ", ".join((metadata or {}).get("selected_features", [])),
+            "target_column": (metadata or {}).get("target_column", data_summary.get("target_column", "n/a")),
+            "log_target": (metadata or {}).get("log_target", data_summary.get("log_target", False)),
+            "source_files_used": ", ".join(data_summary.get("source_files_used", data_summary.get("files_used", []))),
+            "rows_train": data_summary.get("rows_per_split", {}).get("train", "n/a"),
+            "rows_val": data_summary.get("rows_per_split", {}).get("val", "n/a"),
+            "rows_test": data_summary.get("rows_per_split", {}).get("test", "n/a"),
+            "metrics_file_count": data_summary.get("num_metrics_files_used", data_summary.get("metrics_file_count", "n/a")),
             "notes_or_errors": status.get("error") or "",
         }
         for m in METRIC_COLS:
@@ -131,13 +139,14 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    for col in ["dataset_rows", "epochs", *METRIC_COLS]:
+    for col in ["dataset_rows", "epochs", "rows_train", "rows_val", "rows_test", "metrics_file_count", *METRIC_COLS]:
         df[col] = _coerce_numeric(df[col])
 
     leaderboard = df[df["status"] == "success"].sort_values("composite_score", ascending=False).copy()
     best = leaderboard.iloc[0]["scenario"] if not leaderboard.empty else "n/a"
     score_mean = leaderboard["composite_score"].mean() if not leaderboard.empty else float("nan")
     score_std = leaderboard["composite_score"].std() if len(leaderboard) > 1 else float("nan")
+    best_r2 = float(leaderboard.iloc[0]["r2"]) if (not leaderboard.empty and pd.notna(leaderboard.iloc[0]["r2"])) else float("nan")
 
     group_success = leaderboard.groupby("scenario_type", as_index=False).agg(
         scenario_count=("scenario", "count"),
@@ -162,13 +171,26 @@ def aggregate(results_root: Path = Path("results")) -> Path:
     _plot_group_composite(group_success, composite_path)
     _plot_metric_rankings(leaderboard, ranking_path)
 
-    summary = """
-    <p>This benchmark compares the <strong>Liquid Dynamics</strong> scenario family against lightweight MLP, balanced MLP,
-    deep MLP, ultra-performance MLP, attention-based sequence modeling, and xLSTM baselines. Metrics are evaluated
-    on a held-out test set. R2 and composite score are higher-is-better; RMSE/MAE/MAPE/sMAPE/wMAPE are lower-is-better.</p>
-    """
-
     score_std_display = f"{score_std:.3f}" if pd.notna(score_std) else "n/a"
+
+    if pd.notna(best_r2) and best_r2 < 0:
+        conclusion = (
+            f"<p>The top-ranked scenario by composite score is <strong>{best}</strong>, but its R2 is negative ({best_r2:.3f}). "
+            "This is not yet satisfactory and requires better feature/target handling before claiming strong predictive quality.</p>"
+            "<p>At scenario-type granularity, the grouped tables still provide useful relative comparisons across model families.</p>"
+        )
+    else:
+        conclusion = (
+            f"<p>Based on cumulative composite ranking, <strong>{best}</strong> is the strongest individual scenario in this run. "
+            "Interpret this alongside per-metric tables because different baselines may outperform on specific metrics.</p>"
+            "<p>At scenario-type granularity, the grouped tables and charts show how robust each design family is across metrics.</p>"
+        )
+
+    summary = (
+        "<p>This benchmark compares the <strong>Liquid Dynamics</strong> scenario family against lightweight MLP, balanced MLP, "
+        "deep MLP, ultra-performance MLP, attention-based sequence modeling, and xLSTM baselines. Metrics are evaluated "
+        "on a held-out test set. R2 and composite score are higher-is-better; RMSE/MAE/MAPE/sMAPE/wMAPE are lower-is-better.</p>"
+    )
 
     html = [
         "<html><head><meta charset='utf-8'><title>Final Benchmark Report</title>",
@@ -198,10 +220,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "</div>",
         "<div class='section'><h2>Evaluation protocol</h2><p>Time-order/precomputed split with 60% train, 10% validation, 30% test.</p></div>",
         "<div class='section'><h2>Cumulative results grouped by scenario type</h2>",
-        _to_html_table(
-            group_success,
-            ["scenario_type", "scenario_count", *METRIC_COLS, "dataset_rows"],
-        ),
+        _to_html_table(group_success, ["scenario_type", "scenario_count", *METRIC_COLS, "dataset_rows"]),
         "<h2>Scenario-type reliability summary</h2>",
         _to_html_table(status_by_group, ["scenario_type", "total_scenarios", "successful_runs", "success_rate"]),
         "<h2>Global cumulative benchmark averages</h2>",
@@ -213,7 +232,23 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         _to_html_table(leaderboard[["scenario", "scenario_type", *METRIC_COLS]]),
         "</div>",
         "<div class='section'><h2>Feature mapping used by each scenario</h2>",
-        _to_html_table(df[["scenario", "dataset_rows", "num_features", "selected_features"]]),
+        _to_html_table(
+            df[
+                [
+                    "scenario",
+                    "dataset_rows",
+                    "num_features",
+                    "target_column",
+                    "selected_features",
+                    "log_target",
+                    "rows_train",
+                    "rows_val",
+                    "rows_test",
+                    "metrics_file_count",
+                    "source_files_used",
+                ]
+            ]
+        ),
         "</div>",
         "<div class='section'><h2>Comparative visualizations</h2><div class='figure-grid'>",
         f"<div class='figure'><img src='figures/{heatmap_path.name}' alt='Scenario type metric heatmap'><div class='caption'>Average metric profile by scenario type.</div></div>",
@@ -221,10 +256,8 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         f"<div class='figure'><img src='figures/{ranking_path.name}' alt='Metric winner counts'><div class='caption'>How often each scenario wins across all metrics.</div></div>",
         "</div></div>",
         "<div class='section'><h2>Scientific conclusion</h2>",
-        f"<p>Based on cumulative composite ranking, <strong>{best}</strong> is the strongest individual scenario. "
-        "Interpret this alongside per-metric tables because different baselines may outperform on specific metrics "
-        "(for example, stronger R2 or lower RMSE in isolation).</p>"
-        "<p>At scenario-type granularity, the grouped tables and charts show how robust each design family is across metrics.</p></div>",
+        conclusion,
+        "</div>",
         "<div class='section'><h2>Limitations and reproducibility notes</h2>"
         "<ul>"
         "<li>Composite score provides one ranking view but can hide metric-specific trade-offs.</li>"
