@@ -1,171 +1,104 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import subprocess
-import tempfile
-
-from oran_sim.config import SCENARIOS
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+import torch
+
+from agentic_ran.data_loading import load_dataset, write_data_summary
+from agentic_ran.evaluation import evaluate_predictions, predict
+from agentic_ran.models import create_model
+from agentic_ran.preprocessing import build_features, build_features_for_pre_split, split_dataset
+from agentic_ran.reporting import save_json, save_plots, save_predictions
+from agentic_ran.scenarios import SCENARIOS
+from agentic_ran.training import train_model
 
 
-def _iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def run(scenario_name: str) -> None:
+    if scenario_name not in SCENARIOS:
+        raise ValueError(f"Unknown scenario: {scenario_name}. Available: {', '.join(SCENARIOS)}")
 
-
-def run(cmd: list[str]) -> None:
-    print(f"[CMD] {' '.join(cmd)}", flush=True)
-    subprocess.run(cmd, check=True)
-
-
-def _combine_split_predictions(split_outputs: list[tuple[str, Path]]) -> pd.DataFrame:
-    parts: list[pd.DataFrame] = []
-    offset = 0
-    for split_name, pred_path in split_outputs:
-        pred_df = pd.read_csv(pred_path).copy()
-        pred_df["split"] = split_name
-        pred_df["global_index"] = pred_df["index"].to_numpy() + offset
-        offset += len(pred_df)
-        parts.append(pred_df)
-
-    if not parts:
-        return pd.DataFrame()
-
-    return pd.concat(parts, ignore_index=True)
-
-
-def _resolve_dataset_path(scenario: str, dataset: str | None) -> Path:
-    if dataset:
-        return Path(dataset)
-
-    candidates = [
-        Path("shared_data") / f"traffic_data_{scenario}.csv",
-        Path("shared_data") / "traffic_data.csv",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-
-    raise FileNotFoundError(
-        f"No dataset found for scenario '{scenario}'. Expected one of: "
-        + ", ".join(str(c) for c in candidates)
-        + ". Pre-generate data outside docker and mount it in shared_data/."
-    )
-
-
-def main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("--scenario", required=True)
-    p.add_argument(
-        "--dataset",
-        default=None,
-        help="Path to existing dataset CSV. If omitted, tries shared_data/traffic_data_<scenario>.csv then shared_data/traffic_data.csv.",
-    )
-    args = p.parse_args()
-
-    scenario = args.scenario
+    config = SCENARIOS[scenario_name]
     epochs = int(os.getenv("EPOCHS", "5"))
-    sdir = Path("results/scenarios") / scenario
-    sdir.mkdir(parents=True, exist_ok=True)
-    status = {
-        "scenario_name": scenario,
-        "success": False,
-        "start_time": _iso_now(),
-        "end_time": None,
-        "metrics_path": str(sdir / "model" / "metrics.json"),
-        "preds_path": str(sdir / "preds.csv"),
-        "epoch_metrics_path": str(sdir / "model" / "epoch_metrics.csv"),
-        "dataset_path": None,
-        "epochs": epochs,
-        "selected_features": [],
-        "feature_importance_path": str(sdir / "model" / "feature_importance.json"),
-        "split_metadata_path": str(sdir / "model" / "split_metadata.json"),
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    results_dir = Path("results") / scenario_name
+    plots_dir = results_dir / "plots"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    split_dir = Path("shared_data") / "splits"
+    split_files = {
+        "train": split_dir / "train.csv",
+        "val": split_dir / "val.csv",
+        "test": split_dir / "test.csv",
     }
 
-    (sdir / "status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
-    try:
-        print(f"[{scenario}] scenario started", flush=True)
-        csv = _resolve_dataset_path(scenario, args.dataset)
-        status["dataset_path"] = str(csv)
-        print(f"[{scenario}] using existing dataset: {csv}", flush=True)
-        print(f"[{scenario}] epochs={epochs}", flush=True)
-
-        print(f"[{scenario}] training started", flush=True)
-        run(
-            [
-                "python",
-                "-m",
-                "scripts.train",
-                "--csv",
-                str(csv),
-                "--out_dir",
-                str(sdir / "model"),
-                "--seed",
-                "42",
-                "--model",
-                scenario,
-                "--epochs",
-                str(epochs),
-                "--feature_count",
-                str(SCENARIOS[scenario].features),
-            ]
+    if all(path.exists() for path in split_files.values()):
+        train_df = pd.read_csv(split_files["train"])
+        val_df = pd.read_csv(split_files["val"])
+        test_df = pd.read_csv(split_files["test"])
+        (x_train, y_train), (x_val, y_val), (x_test, y_test), feat_meta = build_features_for_pre_split(
+            train_df,
+            val_df,
+            test_df,
+            sequence_length=config.sequence_length,
         )
-        print(f"[{scenario}] training done", flush=True)
+        data_summary = {
+            "source": "pre_split",
+            "files_used": {k: str(v) for k, v in split_files.items()},
+            "rows": int(len(train_df) + len(val_df) + len(test_df)),
+            "split_ratio": {"train": 0.60, "val": 0.10, "test": 0.30},
+        }
+    else:
+        df, data_summary = load_dataset(Path("shared_data"))
+        x, y, feat_meta = build_features(df, sequence_length=config.sequence_length)
+        (x_train, y_train), (x_val, y_val), (x_test, y_test) = split_dataset(x, y)
 
-        features_path = sdir / "model" / "features.json"
-        if features_path.exists():
-            status["selected_features"] = json.loads(features_path.read_text(encoding="utf-8"))
+    input_dim = x_train.shape[-1]
+    model = create_model(config, input_dim=input_dim)
 
-        split_meta_path = sdir / "model" / "split_metadata.json"
-        if split_meta_path.exists():
-            status["split_metadata"] = json.loads(split_meta_path.read_text(encoding="utf-8"))
+    history = train_model(
+        model=model,
+        train_set=(x_train, y_train),
+        val_set=(x_val, y_val),
+        epochs=epochs,
+        batch_size=config.batch_size,
+        learning_rate=config.learning_rate,
+        device=device,
+        log_path=results_dir / "training_log.csv",
+    )
 
-        cfg_path = sdir / "model" / "config.json"
-        if cfg_path.exists():
-            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-            status["model_backend"] = cfg.get("model_backend")
-            status["logical_profile"] = cfg.get("logical_profile")
-            status["profile_note"] = cfg.get("profile_note")
-            status["seq_len"] = cfg.get("seq_len")
+    y_pred = predict(model, x_test, device=device)
+    metrics = evaluate_predictions(y_test, y_pred)
 
-        print(f"[{scenario}] prediction started", flush=True)
-        split_outputs: list[tuple[str, Path]] = []
-        split_names = ["train", "val", "test"]
-        with tempfile.TemporaryDirectory(prefix=f"{scenario}_preds_") as tmp_dir:
-            for split_name in split_names:
-                split_csv = csv.with_name(f"{csv.stem}_{split_name}.csv")
-                split_pred_path = Path(tmp_dir) / f"preds_{split_name}.csv"
-                run(
-                    [
-                        "python",
-                        "-m",
-                        "scripts.predict",
-                        "--model_dir",
-                        str(sdir / "model"),
-                        "--csv",
-                        str(split_csv),
-                        "--output",
-                        str(split_pred_path),
-                    ]
-                )
-                split_outputs.append((split_name, split_pred_path))
+    model_metadata = {
+        "scenario": scenario_name,
+        "model_type": config.model_type,
+        "backend": config.backend,
+        "logical_profile": config.logical_profile,
+        "sequence_length": config.sequence_length,
+        "hidden_size": config.hidden_size,
+        "num_layers": config.num_layers,
+        "dropout": config.dropout,
+        "batch_size": config.batch_size,
+        "learning_rate": config.learning_rate,
+        "epochs": epochs,
+        "device": device,
+        **feat_meta,
+    }
 
-            combined_preds = _combine_split_predictions(split_outputs)
-            combined_preds.to_csv(sdir / "preds.csv", index=False)
-        print(f"[{scenario}] prediction done", flush=True)
-        status["success"] = True
-    except Exception as exc:
-        status["error"] = str(exc)
-        print(f"[{scenario}] failed: {exc}", flush=True)
-    finally:
-        status["end_time"] = _iso_now()
-        (sdir / "status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
-        print(f"[{scenario}] report generated status={status['success']}", flush=True)
+    save_predictions(results_dir / "predictions.csv", y_test, y_pred)
+    save_json(results_dir / "metrics.json", metrics)
+    save_json(results_dir / "model_metadata.json", model_metadata)
+    write_data_summary(results_dir / "data_summary.json", data_summary)
+    save_json(results_dir / "status.json", {"status": "success", "error": None})
+    save_plots(plots_dir, y_test, y_pred, history, scenario_name)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--scenario", required=True, choices=SCENARIOS.keys())
+    args = parser.parse_args()
+    run(args.scenario)

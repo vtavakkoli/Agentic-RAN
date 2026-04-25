@@ -1,0 +1,14 @@
+.DS_Store
+._.DS_Store
+._*
+agent.log
+
+# Local model artifacts
+ml_models/
+**/ml_models/
+*.h5
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.pb

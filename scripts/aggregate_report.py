@@ -1,418 +1,236 @@
 from __future__ import annotations
 
-import base64
-import io
 import json
-import os
-import time
 from pathlib import Path
+from typing import Iterable
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
-from oran_sim.config import FEATURE_ORDER, supported_scenarios
+from agentic_ran.scenarios import SCENARIOS
 
 
-HIGHER_IS_BETTER = {"R2_test", "R2_val"}
+METRIC_COLS = ["r2", "rmse", "mae", "mape", "smape", "wmape", "composite_score"]
+HIGHER_IS_BETTER = {"r2", "composite_score"}
 
 
-def _status_ready(path: Path) -> bool:
+def _read_json(path: Path):
     if not path.exists():
-        return False
-    try:
-        status = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    return bool(status.get("end_time"))
-
-
-def _fig_to_base64(fig) -> str:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight")
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("ascii")
-
-
-def _metric_value(row: dict, primary_metric: str) -> float | None:
-    value = row.get(primary_metric)
-    if value is None or pd.isna(value):
         return None
-    return float(value)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
-def _is_better(current: float, best: float | None, primary_metric: str) -> bool:
-    if best is None:
-        return True
-    if primary_metric in HIGHER_IS_BETTER:
-        return current > best
-    return current < best
+def _coerce_numeric(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce")
 
 
-def _prepare_preds_for_plot(preds: pd.DataFrame) -> pd.DataFrame:
-    if "global_index" in preds.columns:
-        return preds.sort_values("global_index").reset_index(drop=True)
-    if "time_ms" in preds.columns:
-        return preds.sort_values("time_ms").reset_index(drop=True)
-    return preds.reset_index(drop=True)
+def _metric_agg(expr: str) -> dict:
+    return {metric: (metric, expr) for metric in METRIC_COLS}
 
-def _build_timeseries_chart(preds: pd.DataFrame, scenario: str, split_meta: dict | None = None) -> str:
-    sorted_preds = _prepare_preds_for_plot(preds)
-    fig, ax = plt.subplots(figsize=(9, 3))
 
-    if "global_index" in sorted_preds.columns:
-        x_vals = sorted_preds["global_index"].to_numpy()
-        x_label = "global row index"
-    elif "time_ms" in sorted_preds.columns:
-        x_vals = sorted_preds["time_ms"].to_numpy()
-        x_label = "timestamp"
-    else:
-        x_vals = sorted_preds.index.to_numpy()
-        x_label = "row index"
+def _plot_group_metric_heatmap(group_summary: pd.DataFrame, output_path: Path) -> None:
+    plot_df = group_summary.set_index("scenario_type")[METRIC_COLS]
+    if plot_df.empty:
+        return
 
-    if split_meta:
-        tr_s = split_meta.get("train_start_index", 0)
-        tr_e = split_meta.get("train_end_index", -1)
-        va_s = split_meta.get("val_start_index", 0)
-        va_e = split_meta.get("val_end_index", -1)
-        te_s = split_meta.get("test_start_index", 0)
-        te_e = split_meta.get("test_end_index", len(sorted_preds) - 1)
-
-        ax.axvspan(tr_s, tr_e, alpha=0.15, color="#2ca02c", label="Train region")
-        ax.axvspan(va_s, va_e, alpha=0.15, color="#ff7f0e", label="Validation region")
-        ax.axvspan(te_s, te_e, alpha=0.15, color="#1f77b4", label="Test region")
-        ax.axvline(tr_e, color="#2ca02c", linestyle="--", linewidth=1.2)
-        ax.axvline(va_e, color="#ff7f0e", linestyle="--", linewidth=1.2)
-
-    ax.plot(x_vals, sorted_preds["y_true"].to_numpy(), label="y_true", linewidth=1.5, color="blue")
-    ax.plot(x_vals, sorted_preds["y_pred"].to_numpy(), label="y_pred", linewidth=1.2, color="yellow")
-    ax.set_xlabel(x_label)
-    ax.set_title(f"{scenario}: y_true vs y_pred across train/validation/test")
-
-    handles, labels = ax.get_legend_handles_labels()
-    dedup = dict(zip(labels, handles))
-    ax.legend(dedup.values(), dedup.keys(), loc="best", fontsize=8)
-    img = _fig_to_base64(fig)
+    fig, ax = plt.subplots(figsize=(11, 4 + 0.55 * len(plot_df)))
+    im = ax.imshow(plot_df.values, cmap="YlGnBu", aspect="auto")
+    ax.set_xticks(range(len(METRIC_COLS)))
+    ax.set_xticklabels(METRIC_COLS, rotation=30, ha="right")
+    ax.set_yticks(range(len(plot_df.index)))
+    ax.set_yticklabels(plot_df.index)
+    ax.set_title("Average Metric Performance by Scenario Type")
+    for i in range(plot_df.shape[0]):
+        for j in range(plot_df.shape[1]):
+            value = plot_df.iloc[i, j]
+            if pd.notna(value):
+                ax.text(j, i, f"{value:.3f}", ha="center", va="center", fontsize=8, color="#0f172a")
+    fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=170)
     plt.close(fig)
-    return img
 
 
-def _build_split_timeline(split_meta: dict, out_path: Path) -> str:
-    fig, ax = plt.subplots(figsize=(9, 1.8))
-    tr = int(split_meta.get("train_rows", 0))
-    va = int(split_meta.get("val_rows", 0))
-    te = int(split_meta.get("test_rows", 0))
-    total = max(tr + va + te, 1)
-
-    left = 0
-    ax.barh([0], [tr], left=left, color="#2ca02c", label="Train")
-    left += tr
-    ax.barh([0], [va], left=left, color="#ff7f0e", label="Validation")
-    left += va
-    ax.barh([0], [te], left=left, color="#1f77b4", label="Test")
-
-    ax.set_xlim(0, total)
-    ax.set_yticks([])
-    ax.set_xlabel("Row index timeline")
-    ax.set_title("| Train | Validation | Test | (chronological split)")
-    ax.legend(loc="upper center", ncol=3)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=140, bbox_inches="tight")
-    img = _fig_to_base64(fig)
+def _plot_group_composite(group_summary: pd.DataFrame, output_path: Path) -> None:
+    plot_df = group_summary.sort_values("composite_score", ascending=False)
+    if plot_df.empty:
+        return
+    fig, ax = plt.subplots(figsize=(10, 4 + 0.5 * len(plot_df)))
+    bars = ax.barh(plot_df["scenario_type"], plot_df["composite_score"], color="#1d4ed8")
+    ax.invert_yaxis()
+    ax.set_xlabel("Average Composite Score")
+    ax.set_title("Cumulative Composite Score by Scenario Type")
+    for bar in bars:
+        width = bar.get_width()
+        ax.text(width + 0.005, bar.get_y() + bar.get_height() / 2, f"{width:.3f}", va="center", fontsize=9)
+    ax.grid(axis="x", linestyle="--", alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=170)
     plt.close(fig)
-    return img
 
 
-def _split_table(split_meta: dict) -> pd.DataFrame:
+def _plot_metric_rankings(success_df: pd.DataFrame, output_path: Path) -> None:
+    if success_df.empty:
+        return
+    rankings = {}
+    for metric in METRIC_COLS:
+        ascending = metric not in HIGHER_IS_BETTER
+        winner_idx = success_df[metric].sort_values(ascending=ascending).index[0]
+        rankings[metric] = success_df.loc[winner_idx, "scenario"]
+    winners = pd.Series(rankings).value_counts()
+
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    bars = ax.bar(winners.index, winners.values, color="#0f766e")
+    ax.set_ylabel("Number of Metrics Won")
+    ax.set_title("Metric Leader Distribution Across Scenarios")
+    ax.set_xticklabels(winners.index, rotation=20, ha="right")
+    for bar in bars:
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02, f"{int(bar.get_height())}", ha="center")
+    ax.set_ylim(0, max(winners.values) + 1)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=170)
+    plt.close(fig)
+
+
+def _to_html_table(df: pd.DataFrame, columns: Iterable[str] | None = None) -> str:
+    if columns is not None:
+        df = df.loc[:, list(columns)]
+    return df.to_html(index=False, escape=False, float_format=lambda x: f"{x:.4f}" if pd.notna(x) else "")
+
+
+def aggregate(results_root: Path = Path("results")) -> Path:
+    results_root.mkdir(parents=True, exist_ok=True)
     rows = []
-    for split_name, pfx in [("Train", "train"), ("Validation", "val"), ("Test", "test")]:
-        rows.append(
-            {
-                "Split": split_name,
-                "Start index": split_meta.get(f"{pfx}_start_index"),
-                "End index": split_meta.get(f"{pfx}_end_index"),
-                "Start time": split_meta.get(f"{pfx}_start"),
-                "End time": split_meta.get(f"{pfx}_end"),
-                "Rows": split_meta.get(f"{pfx}_rows"),
-                "Percentage": f"{100.0 * float(split_meta.get(f'{pfx}_pct', 0.0)):.1f}%",
-            }
-        )
-    return pd.DataFrame(rows)
 
+    for name, scenario in SCENARIOS.items():
+        folder = results_root / name
+        metrics = _read_json(folder / "metrics.json")
+        metadata = _read_json(folder / "model_metadata.json")
+        status = _read_json(folder / "status.json") or {}
 
-def _build_benchmark_table(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame()
-
-    work = df.copy()
-    metric_cols = [c for c in ["R2_test", "RMSE_test", "MAE_test", "sMAPE_test", "wMAPE_test"] if c in work.columns]
-    for c in metric_cols:
-        work[c] = pd.to_numeric(work[c], errors="coerce")
-
-    score_parts = []
-    eps = 1e-12
-    if "R2_test" in work.columns:
-        r2 = work["R2_test"]
-        score_parts.append((r2 - r2.min()) / max((r2.max() - r2.min()), eps))
-    for c in ["RMSE_test", "MAE_test", "sMAPE_test", "wMAPE_test"]:
-        if c in work.columns:
-            series = work[c]
-            score_parts.append(1.0 - (series - series.min()) / max((series.max() - series.min()), eps))
-
-    if score_parts:
-        stacked = np.vstack([part.to_numpy(dtype=float) for part in score_parts])
-        work["benchmark_score"] = np.nanmean(stacked, axis=0)
-    else:
-        work["benchmark_score"] = np.nan
-
-    rank_cols = [c for c in ["scenario", "model_type", "model_backend", "R2_test", "RMSE_test", "MAE_test", "MAPE_test", "sMAPE_test", "wMAPE_test", "benchmark_score"] if c in work.columns]
-    ranked = work[rank_cols].sort_values("benchmark_score", ascending=False, na_position="last").reset_index(drop=True)
-    if not ranked.empty:
-        ranked.insert(0, "benchmark_rank", np.arange(1, len(ranked) + 1))
-    return ranked
-
-
-def _dataset_summary(dataset_path: Path, scenario: str) -> tuple[pd.DataFrame, str]:
-    if not dataset_path.exists():
-        return pd.DataFrame(), "<p>Dataset not found for this scenario.</p>"
-
-    df = pd.read_csv(dataset_path)
-    feature_cols = [c for c in FEATURE_ORDER if c in df.columns]
-    if not feature_cols:
-        return pd.DataFrame(), "<p>No known feature columns available.</p>"
-
-    stats = df[feature_cols].describe().T[["mean", "std", "min", "max"]].reset_index().rename(columns={"index": "feature"})
-    summary = pd.DataFrame(
-        [
-            {
-                "scenario": scenario,
-                "samples": int(len(df)),
-                "num_features": int(len(feature_cols)),
-                "feature_names": ", ".join(feature_cols),
-            }
-        ]
-    )
-    combined = summary.merge(stats, how="cross")
-
-    violin_features = [c for c in feature_cols if pd.api.types.is_numeric_dtype(df[c])][: min(8, len(feature_cols))]
-    if not violin_features:
-        return combined, "<p>No numeric features available for violin plots.</p>"
-
-    data = [df[c].dropna().to_numpy() for c in violin_features]
-    fig, ax = plt.subplots(figsize=(max(10, len(violin_features) * 1.3), 3.8))
-    ax.violinplot(data, showmeans=True, showmedians=True)
-    ax.set_xticks(range(1, len(violin_features) + 1))
-    ax.set_xticklabels(violin_features, rotation=30, ha="right")
-    ax.set_title(f"{scenario}: feature distributions (violin)")
-    img = _fig_to_base64(fig)
-    plt.close(fig)
-    return combined, f"<img src='data:image/png;base64,{img}'/>"
-
-
-def main() -> None:
-    scenarios = supported_scenarios()
-    status_paths = [Path("results/scenarios") / s / "status.json" for s in scenarios]
-
-    print("[aggregator] waiting for scenario statuses", flush=True)
-    deadline = time.time() + 60 * 60
-    while time.time() < deadline:
-        if all(_status_ready(p) for p in status_paths):
-            break
-        time.sleep(5)
-    else:
-        print("[aggregator] timeout waiting for fresh scenario statuses; proceeding with available files", flush=True)
-
-    out_dir = Path("results/final")
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    rows: list[dict] = []
-    model_chart_sections: list[str] = []
-    dataset_table_sections: list[str] = []
-    violin_sections: list[str] = []
-
-    primary_metric = os.getenv("PRIMARY_METRIC", "R2_test")
-
-    for scenario in scenarios:
-        sdir = Path("results/scenarios") / scenario
-        status_path = sdir / "status.json"
-        status = {"scenario_name": scenario, "success": False, "error": "missing status"}
-        if status_path.exists():
-            try:
-                status = json.loads(status_path.read_text(encoding="utf-8"))
-            except Exception:
-                status = {"scenario_name": scenario, "success": False, "error": "invalid status"}
-
+        ok = bool(metrics and metadata and status.get("status") == "success")
         row = {
-            "scenario": scenario,
-            "success": bool(status.get("success", False)),
-            "error": status.get("error", ""),
-            "metrics_path": status.get("metrics_path", str(sdir / "model" / "metrics.json")),
-            "preds_path": status.get("preds_path", str(sdir / "preds.csv")),
-            "dataset_path": status.get("dataset_path", ""),
-            "epochs": status.get("epochs"),
-            "model_backend": status.get("model_backend"),
-            "logical_profile": status.get("logical_profile"),
-            "profile_note": status.get("profile_note"),
-            "selected_features": ", ".join(status.get("selected_features", [])),
-            "seq_len": status.get("seq_len"),
-            "split_metadata": status.get("split_metadata"),
+            "scenario": name,
+            "scenario_type": scenario.logical_profile,
+            "status": "success" if ok else "failure",
+            "model_type": (metadata or {}).get("model_type", scenario.model_type),
+            "backend": (metadata or {}).get("backend", scenario.backend),
+            "logical_profile": (metadata or {}).get("logical_profile", scenario.logical_profile),
+            "sequence_length": (metadata or {}).get("sequence_length", scenario.sequence_length),
+            "epochs": (metadata or {}).get("epochs", "n/a"),
+            "dataset_rows": (metadata or {}).get("dataset_rows", "n/a"),
+            "num_features": (metadata or {}).get("num_features", "n/a"),
+            "selected_features": ", ".join((metadata or {}).get("selected_features", [])[:8]),
+            "notes_or_errors": status.get("error") or "",
         }
-
-        metrics_path = Path(row["metrics_path"])
-        preds_path = Path(row["preds_path"])
-        cfg_path = metrics_path.parent / "config.json"
-        epoch_metrics_path = metrics_path.parent / "epoch_metrics.csv"
-
-        if cfg_path.exists():
-            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-            row["model_type"] = cfg.get("model_type")
-            row["model_backend"] = cfg.get("model_backend", row.get("model_backend"))
-            row["logical_profile"] = cfg.get("logical_profile", row.get("logical_profile"))
-            row["profile_note"] = cfg.get("profile_note", row.get("profile_note"))
-            row["selected_features"] = ", ".join(cfg.get("features", status.get("selected_features", [])))
-            row["num_features"] = len(cfg.get("features", []))
-            row["epochs"] = cfg.get("epochs", row.get("epochs"))
-            row["seq_len"] = cfg.get("seq_len", row.get("seq_len"))
-            row["split_metadata"] = cfg.get("split_metadata", row.get("split_metadata"))
-        else:
-            row["model_type"] = None
-
-        if epoch_metrics_path.exists():
-            epoch_df = pd.read_csv(epoch_metrics_path)
-            row["epoch_metrics_path"] = str(epoch_metrics_path)
-            row["epochs_logged"] = int(len(epoch_df))
-
-        if metrics_path.exists():
-            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-            test_metrics = metrics.get("test", {})
-            val_metrics = metrics.get("val", {})
-            for key in ["MAE", "RMSE", "MAPE", "sMAPE", "wMAPE", "R2"]:
-                row[f"{key}_test"] = test_metrics.get(key)
-                row[f"{key}_val"] = val_metrics.get(key)
-
-        if preds_path.exists():
-            preds = pd.read_csv(preds_path)
-            row["rows"] = int(len(preds))
-            row["mean_abs_error"] = float(preds["abs_error"].mean())
-            row["mean_abs_pct_error"] = float(preds["pct_error"].abs().mean())
-
-            model_chart = _build_timeseries_chart(preds, scenario, row.get("split_metadata"))
-            model_chart_sections.append(f"<h3>{scenario}</h3><img src='data:image/png;base64,{model_chart}'/>")
-
-        dpath_str = str(row.get("dataset_path", "")).strip()
-        if dpath_str:
-            stats_df, violin_html = _dataset_summary(Path(dpath_str), scenario)
-            if not stats_df.empty:
-                dataset_table_sections.append(f"<h3>{scenario}</h3>{stats_df.to_html(index=False)}")
-            violin_sections.append(f"<h3>{scenario}</h3>{violin_html}")
-
+        for m in METRIC_COLS:
+            row[m] = metrics.get(m) if metrics else None
         rows.append(row)
 
-    comp_df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    for col in ["dataset_rows", "epochs", *METRIC_COLS]:
+        df[col] = _coerce_numeric(df[col])
 
-    best_scenario = None
-    best_metric_value = None
-    for row in rows:
-        v = _metric_value(row, primary_metric)
-        if v is None:
-            continue
-        if _is_better(v, best_metric_value, primary_metric):
-            best_metric_value = v
-            best_scenario = row["scenario"]
+    leaderboard = df[df["status"] == "success"].sort_values("composite_score", ascending=False).copy()
+    best = leaderboard.iloc[0]["scenario"] if not leaderboard.empty else "n/a"
+    score_mean = leaderboard["composite_score"].mean() if not leaderboard.empty else float("nan")
+    score_std = leaderboard["composite_score"].std() if len(leaderboard) > 1 else float("nan")
 
-    table_cols = [
-        "scenario",
-        "success",
-        "model_type",
-        "model_backend",
-        "logical_profile",
-        "seq_len",
-        "epochs",
-        "epochs_logged",
-        "rows",
-        "num_features",
-        "MAE_test",
-        "RMSE_test",
-        "MAPE_test",
-        "sMAPE_test",
-        "wMAPE_test",
-        "R2_test",
-        "mean_abs_error",
-        "mean_abs_pct_error",
-        "selected_features",
-        "profile_note",
-        "error",
-    ]
-    present_cols = [c for c in table_cols if c in comp_df.columns]
-    table_df = comp_df[present_cols].copy() if present_cols else comp_df.copy()
-
-    if best_scenario and not table_df.empty and "scenario" in table_df.columns:
-        table_df["best"] = table_df["scenario"].apply(lambda s: "⭐" if s == best_scenario else "")
-
-    best_text = (
-        f"Best scenario by {primary_metric}: <strong>{best_scenario}</strong> ({best_metric_value:.6f})"
-        if best_scenario is not None
-        else f"Best scenario by {primary_metric}: unavailable (no valid metric values found)."
+    group_success = leaderboard.groupby("scenario_type", as_index=False).agg(
+        scenario_count=("scenario", "count"),
+        **_metric_agg("mean"),
+        dataset_rows=("dataset_rows", "sum"),
     )
+    group_success = group_success.sort_values("composite_score", ascending=False)
 
-    benchmark_df = _build_benchmark_table(comp_df)
-    if not benchmark_df.empty and "scenario" in benchmark_df.columns and "benchmark_score" in benchmark_df.columns:
-        comp_df = comp_df.merge(benchmark_df[["scenario", "benchmark_score"]], on="scenario", how="left")
-    comp_df.to_csv(out_dir / "scenario_status.csv", index=False)
+    status_by_group = (
+        df.groupby("scenario_type", as_index=False)
+        .agg(total_scenarios=("scenario", "count"), successful_runs=("status", lambda x: int((x == "success").sum())))
+        .assign(success_rate=lambda x: (100 * x["successful_runs"] / x["total_scenarios"]))
+    )
+    cumulative_metrics = leaderboard.agg({m: "mean" for m in METRIC_COLS}).to_frame(name="overall_average").T
 
-    split_meta = None
-    for row in rows:
-        if row.get("split_metadata"):
-            split_meta = row["split_metadata"]
-            break
-    split_table_html = "<p>No split metadata available.</p>"
-    split_timeline_html = "<p>No split timeline available.</p>"
-    if split_meta:
-        split_table_html = _split_table(split_meta).to_html(index=False)
-        split_timeline_html = f"<img src='data:image/png;base64,{_build_split_timeline(split_meta, out_dir / 'split_timeline.png')}'/>"
+    figures_dir = results_root / "figures"
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    heatmap_path = figures_dir / "scenario_type_metric_heatmap.png"
+    composite_path = figures_dir / "scenario_type_composite.png"
+    ranking_path = figures_dir / "metric_leaders.png"
+    _plot_group_metric_heatmap(group_success, heatmap_path)
+    _plot_group_composite(group_success, composite_path)
+    _plot_metric_rankings(leaderboard, ranking_path)
 
-    feature_importance_path = Path("results/feature_importance.json")
-    feature_importance_html = "<p>Feature importance artifact not found.</p>"
-    if not feature_importance_path.exists():
-        candidates = sorted(Path("results/scenarios").glob("*/model/feature_importance.json"))
-        if candidates:
-            feature_importance_path = candidates[0]
-    if feature_importance_path.exists():
-        feature_importance_payload = json.loads(feature_importance_path.read_text(encoding="utf-8"))
-        feature_importance_df = pd.DataFrame(feature_importance_payload.get("feature_importance", []))
-        if not feature_importance_df.empty:
-            feature_importance_html = feature_importance_df.to_html(index=False)
-
-    html = f"""
-    <html><body>
-    <h1>KPM Final Report</h1>
-    <h2>Scientific Summary</h2>
-    <p>This report compares all successful scenarios under a unified benchmark protocol using test-set R2 (higher is better), RMSE/MAE/MAPE/sMAPE/wMAPE (lower is better), and a composite benchmark score derived from min-max normalization.</p>
-    <p>Note: MAPE can be unstable when targets approach zero; sMAPE and wMAPE are included as more stable alternatives.</p>
-    <h2>Scenario Comparison</h2>
-    <p>{best_text}</p>
-    {table_df.to_html(index=False)}
-    <h2>Benchmark Leaderboard</h2>
-    {benchmark_df.to_html(index=False) if not benchmark_df.empty else '<p>No benchmark-ready metrics available.</p>'}
-    <h2>Chronological Time-Series Split</h2>
-    <p>All experiments use contiguous chronological blocks only: | Train | Validation | Test |. No random shuffling is used in the official benchmark path.</p>
-    {split_table_html}
-    {split_timeline_html}
-    <p>Temporal windows are built from past values only; validation/test windows do not use future labels. Feature importance is computed on the training split only.</p>
-    <h2>Global Feature Importance (train-only Random Forest)</h2>
-    {feature_importance_html}
-    <h2>Model Predictions vs Ground Truth (timestamp axis)</h2>
-    {''.join(model_chart_sections) if model_chart_sections else '<p>No model charts available.</p>'}
-    <h2>Dataset/Feature Statistics</h2>
-    {''.join(dataset_table_sections) if dataset_table_sections else '<p>No dataset stats available.</p>'}
-    <h2>Feature Violin Plots</h2>
-    {''.join(violin_sections) if violin_sections else '<p>No violin plots available.</p>'}
-    </body></html>
+    summary = """
+    <p>This benchmark compares multiple agentic deep neural network scenarios built with PyTorch and reports
+    cumulative results at both scenario-level and scenario-type-level granularity. Metrics are evaluated on a
+    held-out test set. R2 and composite score are higher-is-better; RMSE/MAE/MAPE/sMAPE/wMAPE are lower-is-better.</p>
     """
 
-    (out_dir / "report.html").write_text(html, encoding="utf-8")
-    print("[aggregator] final report generated", flush=True)
+    score_std_display = f"{score_std:.3f}" if pd.notna(score_std) else "n/a"
+
+    html = [
+        "<html><head><meta charset='utf-8'><title>Final Benchmark Report</title>",
+        "<style>body{font-family:Inter,Segoe UI,Arial,sans-serif;margin:28px;background:#f1f5f9;color:#0f172a;line-height:1.4;}"
+        ".container{max-width:1280px;margin:0 auto;}h1,h2{color:#0b3a75;margin-top:22px;}"
+        ".cards{display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px 0;}"
+        ".card{background:white;border:1px solid #cbd5e1;border-radius:10px;padding:14px 16px;min-width:220px;box-shadow:0 1px 4px rgba(15,23,42,.08);}"
+        ".card .label{font-size:12px;color:#475569;text-transform:uppercase;letter-spacing:.04em;}"
+        ".card .value{font-size:22px;font-weight:700;color:#0b3a75;margin-top:6px;}"
+        "table{border-collapse:collapse;width:100%;margin:10px 0 22px 0;background:white;box-shadow:0 1px 4px rgba(15,23,42,.08);}"
+        "th,td{border:1px solid #cbd5e1;padding:8px 9px;font-size:13px;vertical-align:top;}"
+        "th{background:#dbeafe;color:#1e3a8a;} .section{background:white;padding:14px 18px;border-radius:12px;border:1px solid #cbd5e1;margin-bottom:14px;}"
+        ".figure-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;margin:10px 0 20px;}"
+        ".figure{background:white;border:1px solid #cbd5e1;border-radius:12px;padding:10px;box-shadow:0 1px 4px rgba(15,23,42,.08);}"
+        ".figure img{width:100%;height:auto;border-radius:8px;} .caption{font-size:12px;color:#475569;margin-top:6px;}"
+        "</style></head><body>",
+        "<div class='container'><h1>Final Benchmark Report</h1>",
+        summary,
+        "<div class='cards'>",
+        f"<div class='card'><div class='label'>Best Scenario</div><div class='value'>{best}</div></div>",
+        f"<div class='card'><div class='label'>Successful Runs</div><div class='value'>{len(leaderboard)}/{len(df)}</div></div>",
+        f"<div class='card'><div class='label'>Avg Composite</div><div class='value'>{score_mean:.3f}</div></div>",
+        f"<div class='card'><div class='label'>Composite Std. Dev.</div><div class='value'>{score_std_display}</div></div>",
+        "</div>",
+        "<div class='section'><h2>Evaluation protocol</h2><p>Time-order/precomputed split with 60% train, 10% validation, 30% test.</p></div>",
+        "<div class='section'><h2>Cumulative results grouped by scenario type</h2>",
+        _to_html_table(
+            group_success,
+            ["scenario_type", "scenario_count", *METRIC_COLS, "dataset_rows"],
+        ),
+        "<h2>Scenario-type reliability summary</h2>",
+        _to_html_table(status_by_group, ["scenario_type", "total_scenarios", "successful_runs", "success_rate"]),
+        "<h2>Global cumulative benchmark averages</h2>",
+        _to_html_table(cumulative_metrics, METRIC_COLS),
+        "</div>",
+        "<div class='section'><h2>Scenario-level detailed comparison</h2>",
+        _to_html_table(df),
+        "<h2>Leaderboard (successful scenarios)</h2>",
+        _to_html_table(leaderboard[["scenario", "scenario_type", *METRIC_COLS]]),
+        "</div>",
+        "<div class='section'><h2>Comparative visualizations</h2><div class='figure-grid'>",
+        f"<div class='figure'><img src='figures/{heatmap_path.name}' alt='Scenario type metric heatmap'><div class='caption'>Average metric profile by scenario type.</div></div>",
+        f"<div class='figure'><img src='figures/{composite_path.name}' alt='Scenario type composite scores'><div class='caption'>Cumulative composite scores, ranked.</div></div>",
+        f"<div class='figure'><img src='figures/{ranking_path.name}' alt='Metric winner counts'><div class='caption'>How often each scenario wins across all metrics.</div></div>",
+        "</div></div>",
+        "<div class='section'><h2>Scientific conclusion</h2>",
+        f"<p>Based on cumulative composite ranking, <strong>{best}</strong> is the strongest individual scenario. "
+        "At scenario-type granularity, the grouped tables and charts show how robust each design family is across multiple metrics.</p></div>",
+        "<div class='section'><h2>Scenario prediction plots (top-5 scenarios)</h2><ul>",
+    ]
+
+    for name in leaderboard["scenario"].tolist()[:5]:
+        rel = f"{name}/plots/predictions_vs_truth.png"
+        if (results_root / rel).exists():
+            html.append(f"<li>{name}: <a href='{rel}'>{rel}</a></li>")
+
+    html.extend(["</ul></div></div></body></html>"])
+    report_path = results_root / "report.html"
+    report_path.write_text("\n".join(html), encoding="utf-8")
+    return report_path
 
 
 if __name__ == "__main__":
-    main()
+    path = aggregate()
+    print(f"Wrote {path}")

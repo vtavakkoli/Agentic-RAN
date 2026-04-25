@@ -1,0 +1,10 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.so
+.venv
+venv
+results
+shared_data
