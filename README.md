@@ -1,137 +1,104 @@
 # Agentic RAN Scenario Benchmarking
 
 ## Project overview
-This repository now provides a **scenario-driven benchmark framework** for agentic deep neural network experimentation with a reproducible Docker workflow. It runs multiple model profiles, writes per-scenario outputs, and builds a final benchmark dashboard (`results/report.html`) summarizing which architecture performs best.
+This repository provides a **scenario-driven benchmark framework** for O-RAN data-driven forecasting experiments with reproducible Docker and local Python workflows.
+
+The proposed method family is **Liquid Dynamics** (represented by `liquid-baseline`) and is benchmarked against:
+- lightweight MLP (`lightweight-32`, `lightweight-64`)
+- balanced MLP (`balanced-small`, `balanced-medium`)
+- deep MLP (`deep-performance`)
+- ultra-performance MLP (`ultra-performance`)
+- attention-based sequence modeling (`attention-baseline`)
+- xLSTM (`xlstm-baseline`)
+
+## Dataset and attribution
+### Documented input folder
+Use `dataset/` as the canonical input location for raw CSV data preparation.
+
+Expected layout:
+- `dataset/slice_mixed/**/*.csv`
+- `dataset/slice_traffic/**/*.csv`
+
+`prepare_splits.py` also accepts `dataset/` directly and recursively scans CSVs.
+
+### Tested reference dataset
+Data preparation is tested with the **Colosseum O-RAN COMMAG Dataset** associated with:
+> L. Bonati, S. D'Oro, M. Polese, S. Basagni, T. Melodia, “Intelligence and Learning in O-RAN for Data-driven NextG Cellular Networks,” IEEE Communications Magazine, vol. 59, no. 10, pp. 21–27, October 2021.
+
+Please cite that paper if you use the dataset in a publication.
+
+## Target column and feature handling
+- The prepared benchmark dataset always uses an explicit target column named **`target`**.
+- During preparation, you can explicitly set the raw target column with:
+  ```bash
+  python -m scripts.prepare_splits --target-col "tx_brate downlink [Mbps]"
+  ```
+- If `--target-col` is not set, preparation uses known candidates (`target`, `tx_brate downlink [Mbps]`, `dl_brate`, `rx_brate uplink [Mbps]`, `ul_brate`) and finally falls back to the last numeric column.
+- **Actual source feature names are preserved** (no remapping to `feature_0`, `feature_1`, ...).
 
 ## Requirements
 - Python **3.12**
 - PyTorch (CPU-compatible build by default in Docker)
 - Docker + Docker Compose
 
-Python dependencies are declared in `requirements.txt`.
+Dependencies are declared in `requirements.txt`.
 
 ## Repository structure
-- `agentic_ran/`: reusable core modules
-  - `data_loading.py`: dataset loading (from `shared_data/` CSV files or synthetic fallback)
-  - `preprocessing.py`: feature engineering, scaling, sequence building, train/val/test split (default 60/10/30)
-  - `models.py`: model factory and architectures (MLP, Attention, Liquid, xLSTM)
-  - `training.py`: shared training loop and logging
-  - `evaluation.py`: metrics computation and scoring
-  - `reporting.py`: predictions/metadata/plots export helpers
+- `agentic_ran/`
+  - `data_loading.py`: dataset loading and fallback behavior
+  - `preprocessing.py`: feature extraction, scaling, sequence building, splitting
+  - `models.py`: model factory and architectures
+  - `training.py`: training loop
+  - `evaluation.py`: metric computation and composite scoring
+  - `reporting.py`: outputs and plots
   - `scenarios.py`: scenario catalog and hyperparameters
-- `scripts/run_scenario.py`: runs exactly one scenario
-- `scripts/aggregate_report.py`: aggregates all scenario outputs and writes `results/report.html`
-- `docker-compose.yml`: multi-service scenario execution + aggregator
-- `Dockerfile`: Python 3.12 runtime
+- `scripts/prepare_splits.py`: raw-data preparation and train/val/test split generation
+- `scripts/run_scenario.py`: run one scenario
+- `scripts/run_all.py`: end-to-end prepare + run + aggregate
+- `scripts/aggregate_report.py`: final benchmark report generation (`results/report.html`)
 
-## Docker setup
-Build image:
+## Experiments workflow
+### 1) Prepare data
 ```bash
-docker compose build
-```
-If you previously built an older image and see an error like `No module named scripts.prepare_splits`, rerun with `--build` or rebuild first.
-
-The image is tagged as `agentic-ran:latest` and mounts:
-- `./shared_data -> /app/shared_data`
-- `./results -> /app/results`
-
-Set training epochs globally via environment variable:
-```bash
-EPOCHS=5 docker compose up lightweight-32
-```
-
-## Docker Compose usage
-The compose file includes the following services:
-- prepare-data (converts `slice_mixed/` + `slice_traffic/` into `shared_data/splits/{train,val,test}.csv` with a 60/10/30 split)
-- lightweight-32
-- lightweight-64
-- balanced-small
-- balanced-medium
-- deep-performance
-- ultra-performance
-- attention-baseline
-- liquid-baseline
-- xlstm-baseline
-- aggregator
-- run-all (single command for prepare-data + all scenarios + aggregator)
-
-Each scenario service executes:
-```bash
-python -m scripts.run_scenario --scenario <scenario-name>
-```
-after `prepare-data` has generated split CSV files.
-
-The `aggregator` service runs:
-```bash
-python -m scripts.aggregate_report
-```
-after scenario services complete.
-
-## Scenario descriptions
-- **lightweight-32** / **lightweight-64**: compact MLP models for fast baseline checks.
-- **balanced-small** / **balanced-medium**: deeper MLP profiles balancing quality and speed.
-- **deep-performance** / **ultra-performance**: larger MLP stacks for high-capacity performance testing.
-- **attention-baseline**: Transformer-encoder style sequence regressor.
-- **liquid-baseline**: lightweight liquid/dynamical recurrent baseline.
-- **xlstm-baseline**: bidirectional LSTM sequence baseline.
-
-## Run one scenario
-```bash
-docker compose up prepare-data lightweight-32
-```
-or locally:
-```bash
-python -m scripts.run_scenario --scenario lightweight-32
-```
-
-
-## Create a lightweight dataset and train
-If `shared_data/` has no CSV files, training falls back to synthetic data automatically.
-To explicitly create a small dataset and train with it:
-
-```bash
-python -c "from pathlib import Path; import numpy as np, pandas as pd; rng=np.random.default_rng(42); n=3000; x=rng.normal(size=(n,10)); y=(x @ np.array([0.8,-1.1,0.4,0.6,-0.2,1.3,-0.5,0.7,0.9,-0.3])) + 0.6*np.sin(x[:,0]*x[:,1]) + 0.15*rng.normal(size=n); df=pd.DataFrame(x, columns=[f'feature_{i}' for i in range(10)]); df['target']=y; Path('shared_data').mkdir(parents=True, exist_ok=True); df.to_csv('shared_data/generated_training_dataset.csv', index=False)"
-python -m scripts.run_scenario --scenario lightweight-32
-```
-
-## Shortcut commands
-```bash
-# 1) prepare train/val/test split files from slice_mixed + slice_traffic
 docker compose up --build prepare-data
+```
+Equivalent local command:
+```bash
+python -m scripts.prepare_splits \
+  --input-dir dataset/slice_mixed \
+  --input-dir dataset/slice_traffic \
+  --output-dir shared_data/splits
+```
 
-# 2) run full pipeline (prepare-data + all scenarios + aggregator)
+### 2) Run a single scenario
+```bash
+docker compose up lightweight-32
+```
+or
+```bash
+python -m scripts.run_scenario --scenario lightweight-32
+```
+
+### 3) Run complete benchmark
+```bash
 docker compose up --build run-all
 ```
 
-## Run all scenarios + aggregator
-```bash
-docker compose up --build prepare-data lightweight-32 lightweight-64 balanced-small balanced-medium deep-performance ultra-performance attention-baseline liquid-baseline xlstm-baseline aggregator
-```
+## Reproducibility guidance
+- Keep a fixed random seed for data splitting (`split_and_save` uses seed 42 by default).
+- Reuse the same files in `shared_data/splits/` across scenario runs.
+- Pin epochs with `EPOCHS=<N>` when comparing architectures.
+- Preserve run artifacts under `results/<scenario>/` (metrics, metadata, predictions, training logs, plots).
+- Track `shared_data/splits/summary.json` to capture file provenance, source target columns, and selected feature names.
 
-## Output layout and artifacts
-Each scenario writes to its dedicated folder, e.g.:
-- `results/lightweight-32/`
-- `results/attention-baseline/`
+## Final report interpretation
+The report in `results/report.html` includes cumulative and per-metric views.
 
-Typical outputs per scenario:
-- `metrics.json`
-- `predictions.csv`
-- `training_log.csv`
-- `model_metadata.json`
-- `data_summary.json`
-- `status.json`
-- `plots/predictions_vs_truth.png`
-- `plots/training_curve.png`
+- **Higher is better**: `R2`, `composite_score`
+- **Lower is better**: `RMSE`, `MAE`, `MAPE`, `sMAPE`, `wMAPE`
 
-Aggregator output:
-- `results/report.html`
+The current benchmark report ranks **`liquid-baseline`** as best under cumulative composite score.
+However, you should also inspect individual metrics separately because other baselines may win on specific metrics (e.g., stronger `R2` or lower `RMSE`).
 
-## How aggregation works
-`aggregate_report.py` scans all scenario folders, checks run status and expected artifacts, builds a comparison table, computes a leaderboard from the composite benchmark score, identifies the best scenario, and renders a clean HTML dashboard with scientific summary + conclusion.
-
-## How to interpret the final report
-- **Higher is better**: `R2`, `composite_score`.
-- **Lower is better**: `RMSE`, `MAE`, `MAPE`, `sMAPE`, `wMAPE`.
-- Use the comparison table for traceability (model type, profile, dataset size, feature count).
-- Use the leaderboard for quick ranking.
-- Read the final conclusion for architecture-level recommendation under the current data/training budget.
+## License
+This project is licensed under the **MIT License**. See `LICENSE`.

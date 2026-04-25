@@ -17,7 +17,11 @@ def _iter_csv_files(input_dirs: list[Path]) -> list[Path]:
     return files
 
 
-def _standardize_frame(df: pd.DataFrame, max_features: int) -> pd.DataFrame | None:
+def _standardize_frame(
+    df: pd.DataFrame,
+    max_features: int,
+    explicit_target_col: str | None = None,
+) -> tuple[pd.DataFrame, dict] | None:
     numeric = df.select_dtypes(include=["number"]).dropna()
     if numeric.shape[1] < 2 or numeric.empty:
         return None
@@ -29,40 +33,52 @@ def _standardize_frame(df: pd.DataFrame, max_features: int) -> pd.DataFrame | No
         "rx_brate uplink [Mbps]",
         "ul_brate",
     ]
-    target_col = next((col for col in target_candidates if col in numeric.columns), numeric.columns[-1])
+    target_col = explicit_target_col if explicit_target_col in numeric.columns else None
+    if target_col is None:
+        target_col = next((col for col in target_candidates if col in numeric.columns), numeric.columns[-1])
 
     features = [col for col in numeric.columns if col != target_col]
     features = features[:max_features]
 
-    out = pd.DataFrame()
-    for idx, col in enumerate(features):
-        out[f"feature_{idx}"] = numeric[col].astype(np.float32)
-    for idx in range(len(features), max_features):
-        out[f"feature_{idx}"] = 0.0
+    out = numeric.loc[:, features].astype(np.float32).copy()
     out["target"] = numeric[target_col].astype(np.float32)
-    return out
+    return out, {"source_target_col": target_col, "selected_features": features}
 
 
-def build_dataset(input_dirs: list[Path], max_files: int, rows_per_file: int, max_features: int) -> tuple[pd.DataFrame, dict]:
+def build_dataset(
+    input_dirs: list[Path],
+    max_files: int,
+    rows_per_file: int,
+    max_features: int,
+    target_col: str | None = None,
+) -> tuple[pd.DataFrame, dict]:
     csv_files = _iter_csv_files(input_dirs)
     frames: list[pd.DataFrame] = []
     used_files: list[str] = []
+    feature_schema: list[str] | None = None
+    file_target_columns: dict[str, str] = {}
 
     for file in csv_files[:max_files]:
         try:
             part = pd.read_csv(file)
         except Exception:
             continue
-        standardized = _standardize_frame(part, max_features=max_features)
+        standardized = _standardize_frame(part, max_features=max_features, explicit_target_col=target_col)
         if standardized is None:
             continue
-        frames.append(standardized.head(rows_per_file))
+        standardized_df, file_meta = standardized
+        if feature_schema is None:
+            feature_schema = file_meta["selected_features"]
+        standardized_df = standardized_df.reindex(columns=(feature_schema + ["target"]), fill_value=0.0)
+
+        frames.append(standardized_df.head(rows_per_file))
         used_files.append(str(file))
+        file_target_columns[str(file)] = file_meta["source_target_col"]
 
     if not frames:
         raise RuntimeError(
             "No valid numeric CSV files found under input folders. "
-            "Expected data in slice_mixed/ and slice_traffic/."
+            "Expected data under dataset/ (for example dataset/slice_mixed and dataset/slice_traffic)."
         )
 
     combined = pd.concat(frames, ignore_index=True)
@@ -73,6 +89,9 @@ def build_dataset(input_dirs: list[Path], max_files: int, rows_per_file: int, ma
         "max_files": max_files,
         "rows_per_file": rows_per_file,
         "max_features": max_features,
+        "feature_names": [c for c in combined.columns if c != "target"],
+        "target_column": "target",
+        "source_target_columns": file_target_columns,
     }
     return combined, summary
 
@@ -118,18 +137,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build train/val/test splits from slice_mixed and slice_traffic datasets.")
     parser.add_argument("--input-dir", action="append", dest="input_dirs", default=[])
     parser.add_argument("--output-dir", default="shared_data/splits")
+    parser.add_argument("--target-col", default=None, help="Optional explicit numeric target column name in raw CSVs.")
     parser.add_argument("--max-files", type=int, default=240)
     parser.add_argument("--rows-per-file", type=int, default=300)
     parser.add_argument("--max-features", type=int, default=10)
     args = parser.parse_args()
 
-    raw_input_dirs = args.input_dirs or ["slice_mixed", "slice_traffic"]
+    raw_input_dirs = args.input_dirs or ["dataset/slice_mixed", "dataset/slice_traffic", "dataset"]
     input_dirs = [Path(p) for p in raw_input_dirs]
     df, prep_summary = build_dataset(
         input_dirs=input_dirs,
         max_files=args.max_files,
         rows_per_file=args.rows_per_file,
         max_features=args.max_features,
+        target_col=args.target_col,
     )
     split_summary = split_and_save(df, output_dir=Path(args.output_dir))
 

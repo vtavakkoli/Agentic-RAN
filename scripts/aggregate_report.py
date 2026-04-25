@@ -123,7 +123,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
             "epochs": (metadata or {}).get("epochs", "n/a"),
             "dataset_rows": (metadata or {}).get("dataset_rows", "n/a"),
             "num_features": (metadata or {}).get("num_features", "n/a"),
-            "selected_features": ", ".join((metadata or {}).get("selected_features", [])[:8]),
+            "selected_features": ", ".join((metadata or {}).get("selected_features", [])),
             "notes_or_errors": status.get("error") or "",
         }
         for m in METRIC_COLS:
@@ -163,9 +163,9 @@ def aggregate(results_root: Path = Path("results")) -> Path:
     _plot_metric_rankings(leaderboard, ranking_path)
 
     summary = """
-    <p>This benchmark compares multiple agentic deep neural network scenarios built with PyTorch and reports
-    cumulative results at both scenario-level and scenario-type-level granularity. Metrics are evaluated on a
-    held-out test set. R2 and composite score are higher-is-better; RMSE/MAE/MAPE/sMAPE/wMAPE are lower-is-better.</p>
+    <p>This benchmark compares the <strong>Liquid Dynamics</strong> scenario family against lightweight MLP, balanced MLP,
+    deep MLP, ultra-performance MLP, attention-based sequence modeling, and xLSTM baselines. Metrics are evaluated
+    on a held-out test set. R2 and composite score are higher-is-better; RMSE/MAE/MAPE/sMAPE/wMAPE are lower-is-better.</p>
     """
 
     score_std_display = f"{score_std:.3f}" if pd.notna(score_std) else "n/a"
@@ -184,6 +184,9 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         ".figure-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;margin:10px 0 20px;}"
         ".figure{background:white;border:1px solid #cbd5e1;border-radius:12px;padding:10px;box-shadow:0 1px 4px rgba(15,23,42,.08);}"
         ".figure img{width:100%;height:auto;border-radius:8px;} .caption{font-size:12px;color:#475569;margin-top:6px;}"
+        ".prediction-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:10px;}"
+        ".prediction-card{background:white;border:1px solid #cbd5e1;border-radius:12px;padding:10px;box-shadow:0 1px 4px rgba(15,23,42,.08);}"
+        ".prediction-card img{width:100%;height:auto;border-radius:8px;}"
         "</style></head><body>",
         "<div class='container'><h1>Final Benchmark Report</h1>",
         summary,
@@ -209,6 +212,9 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "<h2>Leaderboard (successful scenarios)</h2>",
         _to_html_table(leaderboard[["scenario", "scenario_type", *METRIC_COLS]]),
         "</div>",
+        "<div class='section'><h2>Feature mapping used by each scenario</h2>",
+        _to_html_table(df[["scenario", "dataset_rows", "num_features", "selected_features"]]),
+        "</div>",
         "<div class='section'><h2>Comparative visualizations</h2><div class='figure-grid'>",
         f"<div class='figure'><img src='figures/{heatmap_path.name}' alt='Scenario type metric heatmap'><div class='caption'>Average metric profile by scenario type.</div></div>",
         f"<div class='figure'><img src='figures/{composite_path.name}' alt='Scenario type composite scores'><div class='caption'>Cumulative composite scores, ranked.</div></div>",
@@ -216,16 +222,37 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "</div></div>",
         "<div class='section'><h2>Scientific conclusion</h2>",
         f"<p>Based on cumulative composite ranking, <strong>{best}</strong> is the strongest individual scenario. "
-        "At scenario-type granularity, the grouped tables and charts show how robust each design family is across multiple metrics.</p></div>",
-        "<div class='section'><h2>Scenario prediction plots (top-5 scenarios)</h2><ul>",
+        "Interpret this alongside per-metric tables because different baselines may outperform on specific metrics "
+        "(for example, stronger R2 or lower RMSE in isolation).</p>"
+        "<p>At scenario-type granularity, the grouped tables and charts show how robust each design family is across metrics.</p></div>",
+        "<div class='section'><h2>Limitations and reproducibility notes</h2>"
+        "<ul>"
+        "<li>Composite score provides one ranking view but can hide metric-specific trade-offs.</li>"
+        "<li>Results depend on data sampling and split composition; rerun with fixed seeds and the same prepared splits for reproducibility.</li>"
+        "<li>Input feature availability can vary by source files, so feature mapping should be reviewed before cross-run comparisons.</li>"
+        "</ul></div>",
+        "<div class='section'><h2>Scenario prediction plots (top-5 scenarios)</h2><div class='prediction-grid'>",
     ]
 
     for name in leaderboard["scenario"].tolist()[:5]:
         rel = f"{name}/plots/predictions_vs_truth.png"
         if (results_root / rel).exists():
-            html.append(f"<li>{name}: <a href='{rel}'>{rel}</a></li>")
+            html.append(
+                f"<div class='prediction-card'>"
+                f"<h3>{name}</h3>"
+                f"<img src='{rel}' alt='{name} predictions vs truth'>"
+                f"<div class='caption'>{rel}</div>"
+                f"</div>"
+            )
+        else:
+            html.append(
+                f"<div class='prediction-card'>"
+                f"<h3>{name}</h3>"
+                f"<div class='caption'>Missing plot: {rel}</div>"
+                f"</div>"
+            )
 
-    html.extend(["</ul></div></div></body></html>"])
+    html.extend(["</div></div></div></body></html>"])
     report_path = results_root / "report.html"
     report_path.write_text("\n".join(html), encoding="utf-8")
     return report_path

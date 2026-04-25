@@ -95,7 +95,6 @@ services:
     volumes:
       - ./agentic_ran:/app/agentic_ran
       - ./scripts:/app/scripts
-      - ./slice_mixed:/app/slice_mixed
-      - ./slice_traffic:/app/slice_traffic
+      - ./dataset:/app/dataset
       - ./shared_data:/app/shared_data
       - ./results:/app/results
