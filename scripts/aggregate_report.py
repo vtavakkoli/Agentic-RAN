@@ -191,6 +191,33 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "</div></div></body></html>",
     ]
 
+    prediction_section = ["<div class='section'><h2>Scenario prediction plots</h2>"]
+    successful_scenarios = leaderboard["scenario"].tolist() if not leaderboard.empty else []
+    if successful_scenarios:
+        prediction_section.append(
+            "<p>Predictions vs. ground truth for each successful scenario, useful for qualitative model-behavior inspection.</p>"
+        )
+        prediction_section.append("<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;'>")
+        for scenario_name in successful_scenarios:
+            pred_rel = f"{scenario_name}/plots/predictions_vs_truth.png"
+            pred_abs = results_root / pred_rel
+            prediction_section.append("<div style='border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff;'>")
+            prediction_section.append(f"<h3 style='margin:4px 0 8px 0'>{scenario_name}</h3>")
+            if pred_abs.exists():
+                prediction_section.append(
+                    f"<img src='{pred_rel}' alt='{scenario_name} predictions vs truth' "
+                    "style='width:100%;height:auto;border-radius:8px;'>"
+                )
+            else:
+                prediction_section.append(f"<p>Missing plot: {pred_rel}</p>")
+            prediction_section.append("</div>")
+        prediction_section.append("</div>")
+    else:
+        prediction_section.append("<p>No successful scenarios were found, so prediction plots are unavailable.</p>")
+    prediction_section.append("</div>")
+
+    html.insert(-1, "\n".join(prediction_section))
+
     report_path = results_root / "report.html"
     report_path.write_text("\n".join(html), encoding="utf-8")
     return report_path
