@@ -11,7 +11,8 @@ from agentic_ran.scenarios import SCENARIOS
 
 
 METRIC_COLS = ["r2", "rmse", "mae", "mape", "smape", "wmape", "composite_score"]
-HIGHER_IS_BETTER = {"r2", "composite_score"}
+PEAK_METRIC_COLS = ["peak_mae", "normal_mae", "peak_rmse", "peak_r2"]
+HIGHER_IS_BETTER = {"r2", "composite_score", "peak_r2"}
 
 
 def _read_json(path: Path):
@@ -28,7 +29,13 @@ def _coerce_numeric(series: pd.Series) -> pd.Series:
 
 
 def _metric_agg(expr: str) -> dict:
-    return {metric: (metric, expr) for metric in METRIC_COLS}
+    return {metric: (metric, expr) for metric in [*METRIC_COLS, *PEAK_METRIC_COLS]}
+
+
+def _to_html_table(df: pd.DataFrame, columns: Iterable[str] | None = None) -> str:
+    if columns is not None:
+        df = df.loc[:, list(columns)]
+    return df.to_html(index=False, escape=False, float_format=lambda x: f"{x:.4f}" if pd.notna(x) else "")
 
 
 def _plot_group_metric_heatmap(group_summary: pd.DataFrame, output_path: Path) -> None:
@@ -43,62 +50,31 @@ def _plot_group_metric_heatmap(group_summary: pd.DataFrame, output_path: Path) -
     ax.set_yticks(range(len(plot_df.index)))
     ax.set_yticklabels(plot_df.index)
     ax.set_title("Average Metric Performance by Scenario Type")
-    for i in range(plot_df.shape[0]):
-        for j in range(plot_df.shape[1]):
-            value = plot_df.iloc[i, j]
-            if pd.notna(value):
-                ax.text(j, i, f"{value:.3f}", ha="center", va="center", fontsize=8, color="#0f172a")
     fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02)
     fig.tight_layout()
     fig.savefig(output_path, dpi=170)
     plt.close(fig)
 
 
-def _plot_group_composite(group_summary: pd.DataFrame, output_path: Path) -> None:
-    plot_df = group_summary.sort_values("composite_score", ascending=False)
+def _plot_residual_vs_mlp(success_df: pd.DataFrame, output_path: Path) -> None:
+    plot_df = success_df[success_df["scenario"].str.contains("residual|lightweight|balanced", regex=True)].copy()
     if plot_df.empty:
         return
-    fig, ax = plt.subplots(figsize=(10, 4 + 0.5 * len(plot_df)))
-    bars = ax.barh(plot_df["scenario_type"], plot_df["composite_score"], color="#1d4ed8")
-    ax.invert_yaxis()
-    ax.set_xlabel("Average Composite Score")
-    ax.set_title("Cumulative Composite Score by Scenario Type")
-    for bar in bars:
-        width = bar.get_width()
-        ax.text(width + 0.005, bar.get_y() + bar.get_height() / 2, f"{width:.3f}", va="center", fontsize=9)
-    ax.grid(axis="x", linestyle="--", alpha=0.25)
+    plot_df = plot_df.sort_values("r2", ascending=False)
+
+    metrics = ["r2", "rmse", "mae", "wmape"]
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+    axes = axes.flatten()
+    for idx, metric in enumerate(metrics):
+        ax = axes[idx]
+        ax.bar(plot_df["scenario"], plot_df[metric], color=["#1d4ed8" if "residual" in s else "#64748b" for s in plot_df["scenario"]])
+        ax.set_title(metric.upper())
+        ax.tick_params(axis="x", rotation=45)
+        ax.grid(axis="y", linestyle="--", alpha=0.3)
+    fig.suptitle("Residual and temporal models vs MLP baselines")
     fig.tight_layout()
     fig.savefig(output_path, dpi=170)
     plt.close(fig)
-
-
-def _plot_metric_rankings(success_df: pd.DataFrame, output_path: Path) -> None:
-    if success_df.empty:
-        return
-    rankings = {}
-    for metric in METRIC_COLS:
-        ascending = metric not in HIGHER_IS_BETTER
-        winner_idx = success_df[metric].sort_values(ascending=ascending).index[0]
-        rankings[metric] = success_df.loc[winner_idx, "scenario"]
-    winners = pd.Series(rankings).value_counts()
-
-    fig, ax = plt.subplots(figsize=(9, 4.5))
-    bars = ax.bar(winners.index, winners.values, color="#0f766e")
-    ax.set_ylabel("Number of Metrics Won")
-    ax.set_title("Metric Leader Distribution Across Scenarios")
-    ax.set_xticklabels(winners.index, rotation=20, ha="right")
-    for bar in bars:
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02, f"{int(bar.get_height())}", ha="center")
-    ax.set_ylim(0, max(winners.values) + 1)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=170)
-    plt.close(fig)
-
-
-def _to_html_table(df: pd.DataFrame, columns: Iterable[str] | None = None) -> str:
-    if columns is not None:
-        df = df.loc[:, list(columns)]
-    return df.to_html(index=False, escape=False, float_format=lambda x: f"{x:.4f}" if pd.notna(x) else "")
 
 
 def aggregate(results_root: Path = Path("results")) -> Path:
@@ -112,6 +88,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         status = _read_json(folder / "status.json") or {}
         data_summary = _read_json(folder / "data_summary.json") or {}
 
+        source_files = data_summary.get("source_files_used", [])
         ok = bool(metrics and metadata and status.get("status") == "success")
         row = {
             "scenario": name,
@@ -121,169 +98,126 @@ def aggregate(results_root: Path = Path("results")) -> Path:
             "backend": (metadata or {}).get("backend", scenario.backend),
             "logical_profile": (metadata or {}).get("logical_profile", scenario.logical_profile),
             "sequence_length": (metadata or {}).get("sequence_length", scenario.sequence_length),
+            "residual": int("residual" in str((metadata or {}).get("model_type", scenario.model_type))),
+            "temporal": int((metadata or {}).get("sequence_length", scenario.sequence_length) > 1),
             "epochs": (metadata or {}).get("epochs", "n/a"),
             "dataset_rows": (metadata or {}).get("dataset_rows", "n/a"),
             "num_features": (metadata or {}).get("num_features", "n/a"),
-            "selected_features": ", ".join((metadata or {}).get("selected_features", [])),
             "target_column": (metadata or {}).get("target_column", data_summary.get("target_column", "n/a")),
             "log_target": (metadata or {}).get("log_target", data_summary.get("log_target", False)),
             "rows_train": data_summary.get("rows_per_split", {}).get("train", "n/a"),
             "rows_val": data_summary.get("rows_per_split", {}).get("val", "n/a"),
             "rows_test": data_summary.get("rows_per_split", {}).get("test", "n/a"),
             "metrics_file_count": data_summary.get("num_metrics_files_used", data_summary.get("metrics_file_count", "n/a")),
+            "source_root": data_summary.get("source_root", "dataset"),
+            "source_files_first5": ", ".join(source_files[:5]),
             "notes_or_errors": status.get("error") or "",
         }
-        for m in METRIC_COLS:
+        for m in [*METRIC_COLS, *PEAK_METRIC_COLS]:
             row[m] = metrics.get(m) if metrics else None
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    for col in ["dataset_rows", "epochs", "rows_train", "rows_val", "rows_test", "metrics_file_count", *METRIC_COLS]:
+    for col in ["dataset_rows", "epochs", "rows_train", "rows_val", "rows_test", "metrics_file_count", *METRIC_COLS, *PEAK_METRIC_COLS]:
         df[col] = _coerce_numeric(df[col])
 
     leaderboard = df[df["status"] == "success"].sort_values("composite_score", ascending=False).copy()
     best = leaderboard.iloc[0]["scenario"] if not leaderboard.empty else "n/a"
     score_mean = leaderboard["composite_score"].mean() if not leaderboard.empty else float("nan")
-    score_std = leaderboard["composite_score"].std() if len(leaderboard) > 1 else float("nan")
-    best_r2 = float(leaderboard.iloc[0]["r2"]) if (not leaderboard.empty and pd.notna(leaderboard.iloc[0]["r2"])) else float("nan")
 
     group_success = leaderboard.groupby("scenario_type", as_index=False).agg(
         scenario_count=("scenario", "count"),
         **_metric_agg("mean"),
         dataset_rows=("dataset_rows", "sum"),
     )
-    group_success = group_success.sort_values("composite_score", ascending=False)
-
-    status_by_group = (
-        df.groupby("scenario_type", as_index=False)
-        .agg(total_scenarios=("scenario", "count"), successful_runs=("status", lambda x: int((x == "success").sum())))
-        .assign(success_rate=lambda x: (100 * x["successful_runs"] / x["total_scenarios"]))
-    )
-    cumulative_metrics = leaderboard.agg({m: "mean" for m in METRIC_COLS}).to_frame(name="overall_average").T
 
     figures_dir = results_root / "figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
     heatmap_path = figures_dir / "scenario_type_metric_heatmap.png"
-    composite_path = figures_dir / "scenario_type_composite.png"
-    ranking_path = figures_dir / "metric_leaders.png"
+    residual_vs_mlp_path = figures_dir / "residual_vs_mlp.png"
     _plot_group_metric_heatmap(group_success, heatmap_path)
-    _plot_group_composite(group_success, composite_path)
-    _plot_metric_rankings(leaderboard, ranking_path)
+    _plot_residual_vs_mlp(leaderboard, residual_vs_mlp_path)
 
-    score_std_display = f"{score_std:.3f}" if pd.notna(score_std) else "n/a"
+    model_family_comparison = leaderboard[
+        ["scenario", "model_type", "sequence_length", "residual", "temporal", "r2", "rmse", "mae", "smape", "wmape", "composite_score"]
+    ].sort_values("composite_score", ascending=False)
 
-    if pd.notna(best_r2) and best_r2 < 0:
-        conclusion = (
-            f"<p>The top-ranked scenario by composite score is <strong>{best}</strong>, but its R2 is negative ({best_r2:.3f}). "
-            "This is not yet satisfactory and requires better feature/target handling before claiming strong predictive quality.</p>"
-            "<p>At scenario-type granularity, the grouped tables still provide useful relative comparisons across model families.</p>"
-        )
-    else:
-        conclusion = (
-            f"<p>Based on cumulative composite ranking, <strong>{best}</strong> is the strongest individual scenario in this run. "
-            "Interpret this alongside per-metric tables because different baselines may outperform on specific metrics.</p>"
-            "<p>At scenario-type granularity, the grouped tables and charts show how robust each design family is across metrics.</p>"
-        )
+    peak_eval = leaderboard[["scenario", "peak_mae", "normal_mae", "peak_rmse", "peak_r2"]].sort_values("peak_mae")
 
-    summary = (
-        "<p>This benchmark compares the <strong>Liquid Dynamics</strong> scenario family against lightweight MLP, balanced MLP, "
-        "deep MLP, ultra-performance MLP, attention-based sequence modeling, and xLSTM baselines. Metrics are evaluated "
-        "on a held-out test set. R2 and composite score are higher-is-better; RMSE/MAE/MAPE/sMAPE/wMAPE are lower-is-better.</p>"
+    def _best(metric: str, lower: bool = False) -> str:
+        if leaderboard.empty or leaderboard[metric].dropna().empty:
+            return "n/a"
+        ranked = leaderboard.sort_values(metric, ascending=lower)
+        return f"{ranked.iloc[0]['scenario']} ({ranked.iloc[0][metric]:.4f})"
+
+    conclusion = (
+        "<p><strong>Best by R2:</strong> " + _best("r2", lower=False) + "</p>"
+        "<p><strong>Best by RMSE:</strong> " + _best("rmse", lower=True) + "</p>"
+        "<p><strong>Best by MAE:</strong> " + _best("mae", lower=True) + "</p>"
+        "<p><strong>Best by wMAPE:</strong> " + _best("wmape", lower=True) + "</p>"
+        "<p><strong>Best by Peak MAE:</strong> " + _best("peak_mae", lower=True) + "</p>"
+        "<p>Composite score remains useful, but these per-metric winners should drive deployment choices.</p>"
     )
 
     html = [
         "<html><head><meta charset='utf-8'><title>Final Benchmark Report</title>",
         "<style>body{font-family:Inter,Segoe UI,Arial,sans-serif;margin:28px;background:#f1f5f9;color:#0f172a;line-height:1.4;}"
         ".container{max-width:1280px;margin:0 auto;}h1,h2{color:#0b3a75;margin-top:22px;}"
-        ".cards{display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px 0;}"
-        ".card{background:white;border:1px solid #cbd5e1;border-radius:10px;padding:14px 16px;min-width:220px;box-shadow:0 1px 4px rgba(15,23,42,.08);}"
-        ".card .label{font-size:12px;color:#475569;text-transform:uppercase;letter-spacing:.04em;}"
-        ".card .value{font-size:22px;font-weight:700;color:#0b3a75;margin-top:6px;}"
-        "table{border-collapse:collapse;width:100%;margin:10px 0 22px 0;background:white;box-shadow:0 1px 4px rgba(15,23,42,.08);}"
-        "th,td{border:1px solid #cbd5e1;padding:8px 9px;font-size:13px;vertical-align:top;}"
+        "table{border-collapse:collapse;width:100%;margin:10px 0 22px 0;background:white;}th,td{border:1px solid #cbd5e1;padding:8px 9px;font-size:13px;}"
         "th{background:#dbeafe;color:#1e3a8a;} .section{background:white;padding:14px 18px;border-radius:12px;border:1px solid #cbd5e1;margin-bottom:14px;}"
-        ".figure-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px;margin:10px 0 20px;}"
-        ".figure{background:white;border:1px solid #cbd5e1;border-radius:12px;padding:10px;box-shadow:0 1px 4px rgba(15,23,42,.08);}"
-        ".figure img{width:100%;height:auto;border-radius:8px;} .caption{font-size:12px;color:#475569;margin-top:6px;}"
-        ".prediction-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:10px;}"
-        ".prediction-card{background:white;border:1px solid #cbd5e1;border-radius:12px;padding:10px;box-shadow:0 1px 4px rgba(15,23,42,.08);}"
-        ".prediction-card img{width:100%;height:auto;border-radius:8px;}"
-        "</style></head><body>",
+        ".figure img{width:100%;max-width:1100px;height:auto;border-radius:8px;}</style></head><body>",
         "<div class='container'><h1>Final Benchmark Report</h1>",
-        summary,
-        "<div class='cards'>",
-        f"<div class='card'><div class='label'>Best Scenario</div><div class='value'>{best}</div></div>",
-        f"<div class='card'><div class='label'>Successful Runs</div><div class='value'>{len(leaderboard)}/{len(df)}</div></div>",
-        f"<div class='card'><div class='label'>Avg Composite</div><div class='value'>{score_mean:.3f}</div></div>",
-        f"<div class='card'><div class='label'>Composite Std. Dev.</div><div class='value'>{score_std_display}</div></div>",
-        "</div>",
-        "<div class='section'><h2>Evaluation protocol</h2><p>Time-order/precomputed split with 60% train, 10% validation, 30% test.</p></div>",
-        "<div class='section'><h2>Cumulative results grouped by scenario type</h2>",
-        _to_html_table(group_success, ["scenario_type", "scenario_count", *METRIC_COLS, "dataset_rows"]),
-        "<h2>Scenario-type reliability summary</h2>",
-        _to_html_table(status_by_group, ["scenario_type", "total_scenarios", "successful_runs", "success_rate"]),
-        "<h2>Global cumulative benchmark averages</h2>",
-        _to_html_table(cumulative_metrics, METRIC_COLS),
+        f"<p><strong>Best scenario by composite:</strong> {best} | <strong>Average composite:</strong> {score_mean:.4f}</p>",
+        "<div class='section'><h2>Model family comparison</h2>",
+        _to_html_table(model_family_comparison),
         "</div>",
         "<div class='section'><h2>Scenario-level detailed comparison</h2>",
-        _to_html_table(df),
-        "<h2>Leaderboard (successful scenarios)</h2>",
-        _to_html_table(leaderboard[["scenario", "scenario_type", *METRIC_COLS]]),
+        _to_html_table(df[["scenario", "status", "model_type", "sequence_length", *METRIC_COLS, *PEAK_METRIC_COLS]]),
         "</div>",
-        "<div class='section'><h2>Feature mapping used by each scenario</h2>",
-        _to_html_table(
-            df[
-                [
-                    "scenario",
-                    "dataset_rows",
-                    "num_features",
-                    "target_column",
-                    "selected_features",
-                    "log_target",
-                    "rows_train",
-                    "rows_val",
-                    "rows_test",
-                    "metrics_file_count",
-                ]
-            ]
-        ),
+        "<div class='section'><h2>Dataset/source summary</h2>",
+        _to_html_table(df[["scenario", "metrics_file_count", "source_files_first5", "source_root", "rows_train", "rows_val", "rows_test"]]),
         "</div>",
-        "<div class='section'><h2>Comparative visualizations</h2><div class='figure-grid'>",
-        f"<div class='figure'><img src='figures/{heatmap_path.name}' alt='Scenario type metric heatmap'><div class='caption'>Average metric profile by scenario type.</div></div>",
-        f"<div class='figure'><img src='figures/{composite_path.name}' alt='Scenario type composite scores'><div class='caption'>Cumulative composite scores, ranked.</div></div>",
-        f"<div class='figure'><img src='figures/{ranking_path.name}' alt='Metric winner counts'><div class='caption'>How often each scenario wins across all metrics.</div></div>",
-        "</div></div>",
+        "<div class='section'><h2>Peak evaluation table</h2>",
+        _to_html_table(peak_eval),
+        "</div>",
+        "<div class='section'><h2>Residual and temporal models vs MLP baselines</h2>",
+        f"<div class='figure'><img src='figures/{residual_vs_mlp_path.name}' alt='Residual and temporal models vs MLP baselines'></div>",
+        "</div>",
+        "<div class='section'><h2>Scenario-type heatmap</h2>",
+        f"<div class='figure'><img src='figures/{heatmap_path.name}' alt='Scenario type metric heatmap'></div>",
+        "</div>",
         "<div class='section'><h2>Scientific conclusion</h2>",
         conclusion,
-        "</div>",
-        "<div class='section'><h2>Limitations and reproducibility notes</h2>"
-        "<ul>"
-        "<li>Composite score provides one ranking view but can hide metric-specific trade-offs.</li>"
-        "<li>Results depend on data sampling and split composition; rerun with fixed seeds and the same prepared splits for reproducibility.</li>"
-        "<li>Input feature availability can vary by source files, so feature mapping should be reviewed before cross-run comparisons.</li>"
-        "</ul></div>",
-        "<div class='section'><h2>Scenario prediction plots (top-5 scenarios)</h2><div class='prediction-grid'>",
+        "</div></div></body></html>",
     ]
 
-    for name in leaderboard["scenario"].tolist()[:5]:
-        rel = f"{name}/plots/predictions_vs_truth.png"
-        if (results_root / rel).exists():
-            html.append(
-                f"<div class='prediction-card'>"
-                f"<h3>{name}</h3>"
-                f"<img src='{rel}' alt='{name} predictions vs truth'>"
-                f"<div class='caption'>{rel}</div>"
-                f"</div>"
-            )
-        else:
-            html.append(
-                f"<div class='prediction-card'>"
-                f"<h3>{name}</h3>"
-                f"<div class='caption'>Missing plot: {rel}</div>"
-                f"</div>"
-            )
+    prediction_section = ["<div class='section'><h2>Scenario prediction plots</h2>"]
+    successful_scenarios = leaderboard["scenario"].tolist() if not leaderboard.empty else []
+    if successful_scenarios:
+        prediction_section.append(
+            "<p>Predictions vs. ground truth for each successful scenario, useful for qualitative model-behavior inspection.</p>"
+        )
+        prediction_section.append("<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;'>")
+        for scenario_name in successful_scenarios:
+            pred_rel = f"{scenario_name}/plots/predictions_vs_truth.png"
+            pred_abs = results_root / pred_rel
+            prediction_section.append("<div style='border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff;'>")
+            prediction_section.append(f"<h3 style='margin:4px 0 8px 0'>{scenario_name}</h3>")
+            if pred_abs.exists():
+                prediction_section.append(
+                    f"<img src='{pred_rel}' alt='{scenario_name} predictions vs truth' "
+                    "style='width:100%;height:auto;border-radius:8px;'>"
+                )
+            else:
+                prediction_section.append(f"<p>Missing plot: {pred_rel}</p>")
+            prediction_section.append("</div>")
+        prediction_section.append("</div>")
+    else:
+        prediction_section.append("<p>No successful scenarios were found, so prediction plots are unavailable.</p>")
+    prediction_section.append("</div>")
 
-    html.extend(["</div></div></div></body></html>"])
+    html.insert(-1, "\n".join(prediction_section))
+
     report_path = results_root / "report.html"
     report_path.write_text("\n".join(html), encoding="utf-8")
     return report_path

@@ -12,7 +12,41 @@ def _to_tensor(x, y):
     return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
 
 
-def train_model(model, train_set, val_set, epochs: int, batch_size: int, learning_rate: float, device: str, log_path: Path):
+def weighted_huber_loss(pred: torch.Tensor, target: torch.Tensor, peak_weight: float, quantile_85: torch.Tensor, delta: float = 1.0) -> torch.Tensor:
+    abs_err = torch.abs(pred - target)
+    huber = torch.where(abs_err <= delta, 0.5 * abs_err**2, delta * (abs_err - 0.5 * delta))
+    peak_mask = (target > quantile_85).to(target.dtype)
+    weight = 1.0 + peak_weight * peak_mask
+    return torch.mean(weight * huber)
+
+
+def _build_criterion(loss_name: str, y_train: torch.Tensor, peak_weight: float):
+    if loss_name == "mse":
+        return nn.MSELoss(), None
+    if loss_name == "huber":
+        return nn.SmoothL1Loss(), None
+    if loss_name == "weighted_huber":
+        q85 = torch.quantile(y_train, 0.85)
+
+        def _criterion(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+            return weighted_huber_loss(pred, target, peak_weight=peak_weight, quantile_85=q85.to(target.device))
+
+        return _criterion, float(q85.item())
+    raise ValueError(f"Unsupported loss: {loss_name}")
+
+
+def train_model(
+    model,
+    train_set,
+    val_set,
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    device: str,
+    log_path: Path,
+    loss_name: str = "mse",
+    peak_weight: float = 2.0,
+):
     x_train, y_train = _to_tensor(*train_set)
     x_val, y_val = _to_tensor(*val_set)
     train_loader = DataLoader(TensorDataset(x_train, y_train), batch_size=batch_size, shuffle=True)
@@ -20,7 +54,7 @@ def train_model(model, train_set, val_set, epochs: int, batch_size: int, learnin
 
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    criterion = nn.MSELoss()
+    criterion, q85 = _build_criterion(loss_name=loss_name, y_train=y_train, peak_weight=peak_weight)
 
     history = []
     for epoch in range(1, epochs + 1):
@@ -51,4 +85,4 @@ def train_model(model, train_set, val_set, epochs: int, batch_size: int, learnin
         writer.writeheader()
         writer.writerows(history)
 
-    return history
+    return history, q85

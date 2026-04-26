@@ -37,6 +37,8 @@ def run_all(
     target_col: str,
     keep_zero_requested_prbs: bool,
     log_target: bool,
+    loss: str | None = None,
+    peak_weight: float | None = None,
 ) -> None:
     prepare_data(
         max_files=max_files,
@@ -46,7 +48,7 @@ def run_all(
         keep_zero_requested_prbs=keep_zero_requested_prbs,
     )
     for scenario_name in SCENARIOS:
-        run(scenario_name, target_col=target_col, log_target=log_target)
+        run(scenario_name, target_col=target_col, log_target=log_target, loss=loss, peak_weight=peak_weight)
     aggregate(Path("results"))
 
 
@@ -58,6 +60,8 @@ if __name__ == "__main__":
     parser.add_argument("--target-col", default=DEFAULT_TARGET_COL)
     parser.add_argument("--keep-zero-requested-prbs", action="store_true")
     parser.add_argument("--log-target", action="store_true")
+    parser.add_argument("--loss", choices=["mse", "huber", "weighted_huber"], default=None)
+    parser.add_argument("--peak-weight", type=float, default=None)
     args = parser.parse_args()
     run_all(
         max_files=args.max_files,
@@ -66,4 +70,6 @@ if __name__ == "__main__":
         target_col=args.target_col,
         keep_zero_requested_prbs=args.keep_zero_requested_prbs,
         log_target=args.log_target,
+        loss=args.loss,
+        peak_weight=args.peak_weight,
     )
