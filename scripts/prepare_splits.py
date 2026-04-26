@@ -185,6 +185,7 @@ def build_dataset(
 
     total_rows = sum(len(frame) for _, frame in per_file_frames)
     summary = {
+        "source_root": "dataset",
         "rows": int(total_rows),
         "files_used": used_files,
         "metrics_file_count": len(used_files),

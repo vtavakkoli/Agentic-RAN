@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -18,11 +19,27 @@ from agentic_ran.scenarios import SCENARIOS
 from agentic_ran.training import train_model
 
 
-def run(scenario_name: str, target_col: str = DEFAULT_TARGET_COL, log_target: bool = False) -> None:
+def run(
+    scenario_name: str,
+    target_col: str = DEFAULT_TARGET_COL,
+    log_target: bool = False,
+    loss: str | None = None,
+    peak_weight: float | None = None,
+    sequence_length: int | None = None,
+    model_type: str | None = None,
+) -> None:
     if scenario_name not in SCENARIOS:
         raise ValueError(f"Unknown scenario: {scenario_name}. Available: {', '.join(SCENARIOS)}")
 
-    config = SCENARIOS[scenario_name]
+    base = SCENARIOS[scenario_name]
+    config = replace(
+        base,
+        loss=loss or base.loss,
+        peak_weight=base.peak_weight if peak_weight is None else peak_weight,
+        sequence_length=sequence_length or base.sequence_length,
+        model_type=model_type or base.model_type,
+    )
+
     epochs = int(os.getenv("EPOCHS", "5"))
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -55,6 +72,7 @@ def run(scenario_name: str, target_col: str = DEFAULT_TARGET_COL, log_target: bo
         data_summary = {
             "source": "pre_split",
             "source_files_used": split_summary.get("preprocessing", {}).get("files_used", []),
+            "source_root": split_summary.get("preprocessing", {}).get("source_root", "dataset"),
             "num_metrics_files_used": split_summary.get("preprocessing", {}).get("metrics_file_count", 0),
             "target_column": split_summary.get("preprocessing", {}).get("target_column", target_col),
             "selected_features": split_summary.get("preprocessing", {}).get("feature_names", []),
@@ -81,7 +99,7 @@ def run(scenario_name: str, target_col: str = DEFAULT_TARGET_COL, log_target: bo
     input_dim = x_train.shape[-1]
     model = create_model(config, input_dim=input_dim)
 
-    history = train_model(
+    history, q85 = train_model(
         model=model,
         train_set=(x_train, y_train_model),
         val_set=(x_val, y_val_model),
@@ -90,6 +108,8 @@ def run(scenario_name: str, target_col: str = DEFAULT_TARGET_COL, log_target: bo
         learning_rate=config.learning_rate,
         device=device,
         log_path=results_dir / "training_log.csv",
+        loss_name=config.loss,
+        peak_weight=config.peak_weight,
     )
 
     y_pred_model = predict(model, x_test, device=device)
@@ -113,6 +133,9 @@ def run(scenario_name: str, target_col: str = DEFAULT_TARGET_COL, log_target: bo
         "dropout": config.dropout,
         "batch_size": config.batch_size,
         "learning_rate": config.learning_rate,
+        "loss": config.loss,
+        "peak_weight": config.peak_weight,
+        "train_q85": q85,
         "epochs": epochs,
         "device": device,
         "target_column": data_summary.get("target_column", target_col),
@@ -133,5 +156,17 @@ if __name__ == "__main__":
     parser.add_argument("--scenario", required=True, choices=SCENARIOS.keys())
     parser.add_argument("--target-col", default=DEFAULT_TARGET_COL)
     parser.add_argument("--log-target", action="store_true", help="Train on log1p(target) and inverse-transform predictions before evaluation.")
+    parser.add_argument("--loss", choices=["mse", "huber", "weighted_huber"], default=None)
+    parser.add_argument("--peak-weight", type=float, default=None)
+    parser.add_argument("--model", choices=["mlp", "attention", "liquid", "xlstm", "residual_mlp", "residual_tcn", "residual_liquid_tcn"], default=None)
+    parser.add_argument("--sequence-length", type=int, default=None)
     args = parser.parse_args()
-    run(args.scenario, target_col=args.target_col, log_target=args.log_target)
+    run(
+        args.scenario,
+        target_col=args.target_col,
+        log_target=args.log_target,
+        loss=args.loss,
+        peak_weight=args.peak_weight,
+        sequence_length=args.sequence_length,
+        model_type=args.model,
+    )
