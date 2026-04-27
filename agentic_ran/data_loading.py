@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -70,6 +72,15 @@ DEFAULT_FEATURES = [
     "ul_turbo_iters",
 ]
 DEFAULT_TARGET_COL = "tx_brate downlink [Mbps]"
+REQUIRED_COLUMNS = {"Timestamp", "IMSI", "slice_id", "scheduling_policy", "sum_requested_prbs", "sum_granted_prbs", DEFAULT_TARGET_COL}
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _validate_columns(df: pd.DataFrame, source: Path) -> None:
+    missing = sorted(REQUIRED_COLUMNS.difference(df.columns))
+    if missing:
+        raise ValueError(f"Missing required columns in {source}: {missing}")
 
 
 def load_dataset(
@@ -81,6 +92,12 @@ def load_dataset(
 ) -> tuple[pd.DataFrame, dict]:
     selected_features = selected_features or DEFAULT_FEATURES
     csv_files = sorted(shared_data_dir.glob(METRICS_GLOB)) if shared_data_dir.exists() else []
+
+    if csv_files:
+        by_parent = Counter(str(p.parent) for p in csv_files)
+        LOGGER.info("Loaded %s metrics files from %s folders.", len(csv_files), len(by_parent))
+        for folder, count in by_parent.items():
+            LOGGER.info("  folder=%s count=%s", folder, count)
 
     if not csv_files:
         rng = np.random.default_rng(42)
@@ -102,6 +119,9 @@ def load_dataset(
     for file in csv_files[:8]:
         try:
             part = pd.read_csv(file, names=METRIC_COLUMNS, header=0, usecols=METRIC_COLUMNS)
+            _validate_columns(part, file)
+            part["Timestamp"] = pd.to_datetime(part["Timestamp"], errors="coerce")
+            part = part.dropna(subset=["Timestamp"])
             part["sum_requested_prbs"] = pd.to_numeric(part["sum_requested_prbs"], errors="coerce")
             part["sum_granted_prbs"] = pd.to_numeric(part["sum_granted_prbs"], errors="coerce")
             part["ratio_granted_req"] = np.clip(
@@ -117,28 +137,31 @@ def load_dataset(
             if target_col not in part.columns or not feature_cols:
                 continue
 
-            narrow = part.loc[:, feature_cols + [target_col]].copy()
-            narrow = narrow.apply(pd.to_numeric, errors="coerce").dropna()
+            narrow = part.loc[:, ["Timestamp", *feature_cols, target_col]].copy()
+            for c in feature_cols + [target_col]:
+                narrow[c] = pd.to_numeric(narrow[c], errors="coerce")
+            narrow = narrow.dropna().sort_values("Timestamp")
             if narrow.empty:
                 continue
             narrow = narrow.head(rows_per)
             narrow = narrow.rename(columns={target_col: "target"})
             frames.append(narrow)
             used_files.append(str(file))
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("Skipping %s due to parsing/validation error: %s", file, exc)
             continue
 
     if not frames:
         return load_dataset(Path("/nonexistent"), max_rows=max_rows)
 
-    df = pd.concat(frames, axis=0, ignore_index=True)
+    df = pd.concat(frames, axis=0, ignore_index=True).sort_values("Timestamp").reset_index(drop=True)
     summary = {
         "source": "shared_data",
         "file_glob": METRICS_GLOB,
         "files_used": used_files,
         "metrics_file_count": len(used_files),
         "rows": int(df.shape[0]),
-        "selected_features": [c for c in df.columns if c != "target"],
+        "selected_features": [c for c in df.columns if c not in {"target", "Timestamp"}],
         "target_column": target_col,
     }
     return df, summary

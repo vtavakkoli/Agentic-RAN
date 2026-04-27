@@ -3,6 +3,8 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from agentic_ran.agentic_models import AgenticLiquidModel, AgenticResidualMLP, AgenticSequenceModel
+from agentic_ran.residual_models import ResidualLiquidTCNRegressor, ResidualMLPRegressor, ResidualTCNRegressor
 from agentic_ran.scenarios import ScenarioConfig
 
 
@@ -97,4 +99,16 @@ def create_model(config: ScenarioConfig, input_dim: int) -> nn.Module:
         return LiquidRegressor(input_dim=input_dim, hidden_size=config.hidden_size)
     if config.model_type == "xlstm":
         return XLSTMRegressor(input_dim=input_dim, hidden_size=config.hidden_size, num_layers=config.num_layers, dropout=config.dropout)
+    if config.model_type == "residual_mlp":
+        return ResidualMLPRegressor(input_dim=input_dim, hidden_size=config.hidden_size, num_layers=config.num_layers, dropout=config.dropout)
+    if config.model_type == "residual_tcn":
+        return ResidualTCNRegressor(input_dim=input_dim, hidden_size=config.hidden_size, num_layers=config.num_layers, dropout=config.dropout)
+    if config.model_type == "residual_liquid_tcn":
+        return ResidualLiquidTCNRegressor(input_dim=input_dim, hidden_size=config.hidden_size, num_layers=config.num_layers, dropout=config.dropout)
+    if config.model_type in {"agentic_mlp", "agentic_residual_mlp"}:
+        return AgenticResidualMLP(input_dim=input_dim, hidden_size=config.hidden_size, num_layers=config.num_layers, dropout=config.dropout)
+    if config.model_type in {"agentic_sequence_model", "agentic_sequence_attention"}:
+        return AgenticSequenceModel(input_dim=input_dim, hidden_size=config.hidden_size, num_layers=config.num_layers, dropout=config.dropout)
+    if config.model_type in {"agentic_liquid_model", "agentic_liquid_residual", "liquid_agentic", "liquid_agentic_residual"}:
+        return AgenticLiquidModel(input_dim=input_dim, hidden_size=config.hidden_size, num_layers=config.num_layers, dropout=config.dropout)
     raise ValueError(f"Unsupported model type: {config.model_type}")
