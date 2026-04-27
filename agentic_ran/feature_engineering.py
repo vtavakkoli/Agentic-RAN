@@ -192,11 +192,23 @@ def enrich_features(df: pd.DataFrame, flags: FeatureFlags | None = None) -> pd.D
 
     if flags.use_agentic_policy_features and "experiment_second" in out.columns:
         schedule = out["experiment_second"].apply(get_expected_rbg_allocation).apply(pd.Series)
-        out = pd.concat([out, schedule], axis=1)
-        out["expected_rbg_for_slice"] = out.apply(
-            lambda r: r.get(f"expected_rbg_slice_{int(r['slice_id'])}", np.nan) if r.get("slice_id", -1) in (0, 1, 2) else np.nan,
-            axis=1,
-        )
+        for col in schedule.columns:
+            out[col] = schedule[col]
+
+        slice_id = pd.to_numeric(out.get("slice_id"), errors="coerce").fillna(-1).astype(int)
+        expected_rbg = pd.Series(np.nan, index=out.index, dtype=float)
+        valid = slice_id.isin([0, 1, 2])
+        if valid.any():
+            expected_matrix = np.column_stack(
+                [
+                    pd.to_numeric(out["expected_rbg_slice_0"], errors="coerce").to_numpy(),
+                    pd.to_numeric(out["expected_rbg_slice_1"], errors="coerce").to_numpy(),
+                    pd.to_numeric(out["expected_rbg_slice_2"], errors="coerce").to_numpy(),
+                ]
+            )
+            valid_idx = np.flatnonzero(valid.to_numpy())
+            expected_rbg.iloc[valid_idx] = expected_matrix[valid_idx, slice_id.iloc[valid_idx].to_numpy()]
+        out["expected_rbg_for_slice"] = expected_rbg
 
     numeric_cols = out.select_dtypes(include=[np.number]).columns
     out[numeric_cols] = out[numeric_cols].replace([np.inf, -np.inf], np.nan).fillna(0.0)
