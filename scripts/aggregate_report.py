@@ -10,7 +10,7 @@ import pandas as pd
 from agentic_ran.scenarios import SCENARIOS
 
 
-METRIC_COLS = ["r2", "rmse", "mae", "mape", "smape", "wmape", "composite_score"]
+METRIC_COLS = ["r2", "rmse", "mae", "mape", "smape", "wmape", "composite_score", "action_accuracy", "action_macro_f1"]
 PEAK_METRIC_COLS = ["peak_mae", "normal_mae", "peak_rmse", "peak_r2"]
 HIGHER_IS_BETTER = {"r2", "composite_score", "peak_r2"}
 
@@ -87,6 +87,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         metadata = _read_json(folder / "model_metadata.json")
         status = _read_json(folder / "status.json") or {}
         data_summary = _read_json(folder / "data_summary.json") or {}
+        agentic_summary = _read_json(folder / "agentic_summary.json") or {}
 
         source_files = data_summary.get("source_files_used", [])
         ok = bool(metrics and metadata and status.get("status") == "success")
@@ -111,6 +112,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
             "metrics_file_count": data_summary.get("num_metrics_files_used", data_summary.get("metrics_file_count", "n/a")),
             "source_root": data_summary.get("source_root", "dataset"),
             "source_files_first5": ", ".join(source_files[:5]),
+            "avg_decision_confidence": agentic_summary.get("average_confidence", float("nan")),
             "notes_or_errors": status.get("error") or "",
         }
         for m in [*METRIC_COLS, *PEAK_METRIC_COLS]:
@@ -139,7 +141,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
     _plot_residual_vs_mlp(leaderboard, residual_vs_mlp_path)
 
     model_family_comparison = leaderboard[
-        ["scenario", "model_type", "sequence_length", "residual", "temporal", "r2", "rmse", "mae", "smape", "wmape", "composite_score"]
+        ["scenario", "model_type", "sequence_length", "residual", "temporal", "r2", "rmse", "mae", "smape", "wmape", "composite_score", "action_accuracy", "action_macro_f1"]
     ].sort_values("composite_score", ascending=False)
 
     peak_eval = leaderboard[["scenario", "peak_mae", "normal_mae", "peak_rmse", "peak_r2"]].sort_values("peak_mae")
@@ -177,8 +179,20 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "<div class='section'><h2>Dataset/source summary</h2>",
         _to_html_table(df[["scenario", "metrics_file_count", "source_files_first5", "source_root", "rows_train", "rows_val", "rows_test"]]),
         "</div>",
+        "<div class='section'><h2>Time-aware feature section</h2><p>Timestamp is parsed with pandas datetime conversion, sorted chronologically, and transformed into hour/day cyclic signals, elapsed seconds, experiment_second, and time-index features.</p></div>",
+        "<div class='section'><h2>Traffic-aware feature section</h2><p>UE identifiers are mapped to eMBB/MTC/URLLC classes, slice semantics are inferred (slice 0/1/2), and match/mismatch signals are generated for traffic-vs-slice consistency.</p></div>",
         "<div class='section'><h2>Peak evaluation table</h2>",
         _to_html_table(peak_eval),
+        "</div>",
+        "<div class='section'><h2>Agentic decision section</h2>",
+        _to_html_table(df[["scenario", "action_accuracy", "action_macro_f1", "avg_decision_confidence"]]),
+        "</div>",
+        "<div class='section'><h2>Ablation table</h2>",
+        _to_html_table(
+            leaderboard[leaderboard["scenario"].isin(["lightweight-32", "with_time_features", "with_time_and_traffic_features", "residual-mlp-128", "agentic_residual_mlp", "agentic_liquid_residual"])][
+                ["scenario", "model_type", "r2", "rmse", "mae", "wmape", "action_accuracy", "action_macro_f1", "composite_score"]
+            ]
+        ),
         "</div>",
         "<div class='section'><h2>Residual and temporal models vs MLP baselines</h2>",
         f"<div class='figure'><img src='figures/{residual_vs_mlp_path.name}' alt='Residual and temporal models vs MLP baselines'></div>",

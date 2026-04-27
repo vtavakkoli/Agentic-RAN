@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from agentic_ran.feature_engineering import FeatureFlags, enrich_features
+
 METRICS_GLOB = "**/*_metrics.csv"
 METRIC_COLUMNS = [
     "Timestamp",
@@ -108,6 +110,7 @@ def _standardize_frame(
     selected_features: list[str],
     target_col: str,
     keep_zero_requested_prbs: bool,
+    feature_flags: FeatureFlags,
 ) -> pd.DataFrame:
     working = df.copy()
 
@@ -135,14 +138,14 @@ def _standardize_frame(
     for col in selected_features + [target_col]:
         standardized[col] = pd.to_numeric(standardized[col], errors="coerce")
 
-    standardized["Timestamp"] = pd.to_datetime(standardized["Timestamp"], errors="coerce")
-    standardized = standardized.sort_values("Timestamp", kind="stable")
+    standardized = enrich_features(standardized, flags=feature_flags)
     standardized = standardized.dropna(subset=selected_features + [target_col]).reset_index(drop=True)
 
     if standardized.empty:
         return standardized
 
-    out = standardized.loc[:, ["Timestamp", *selected_features, target_col]].copy()
+    engineered = [c for c in standardized.columns if c not in {target_col}]
+    out = standardized.loc[:, engineered + [target_col]].copy()
     out = out.rename(columns={target_col: "target"})
     return out
 
@@ -154,8 +157,10 @@ def build_dataset(
     selected_features: list[str],
     target_col: str,
     keep_zero_requested_prbs: bool,
+    feature_flags: FeatureFlags | None = None,
 ) -> tuple[list[tuple[str, pd.DataFrame]], dict]:
     _validate_selected_features(selected_features)
+    feature_flags = feature_flags or FeatureFlags()
     metrics_files = _iter_metrics_files(input_dirs)
     per_file_frames: list[tuple[str, pd.DataFrame]] = []
     used_files: list[str] = []
@@ -168,6 +173,7 @@ def build_dataset(
                 selected_features=selected_features,
                 target_col=target_col,
                 keep_zero_requested_prbs=keep_zero_requested_prbs,
+                feature_flags=feature_flags,
             )
         except Exception:
             continue
@@ -192,6 +198,11 @@ def build_dataset(
         "max_files": max_files,
         "rows_per_file": rows_per_file,
         "feature_names": selected_features,
+        "feature_flags": {
+            "use_time_features": feature_flags.use_time_features,
+            "use_traffic_features": feature_flags.use_traffic_features,
+            "use_agentic_policy_features": feature_flags.use_agentic_policy_features,
+        },
         "target_column": target_col,
         "keep_zero_requested_prbs": keep_zero_requested_prbs,
         "file_glob": METRICS_GLOB,
@@ -228,9 +239,9 @@ def split_and_save(per_file_frames: list[tuple[str, pd.DataFrame]], output_dir: 
             "total": int(n_rows),
         }
 
-    train_all = pd.concat(train_parts, ignore_index=True).drop(columns=["Timestamp"], errors="ignore")
-    val_all = pd.concat(val_parts, ignore_index=True).drop(columns=["Timestamp"], errors="ignore")
-    test_all = pd.concat(test_parts, ignore_index=True).drop(columns=["Timestamp"], errors="ignore")
+    train_all = pd.concat(train_parts, ignore_index=True)
+    val_all = pd.concat(val_parts, ignore_index=True)
+    test_all = pd.concat(test_parts, ignore_index=True)
 
     train_path = output_dir / "train.csv"
     val_path = output_dir / "val.csv"
@@ -266,6 +277,12 @@ def main() -> None:
     parser.add_argument("--max-files", type=int, default=240)
     parser.add_argument("--rows-per-file", type=int, default=300)
     parser.add_argument("--keep-zero-requested-prbs", action="store_true", help="Keep rows where sum_requested_prbs <= 0.")
+    parser.add_argument("--use-time-features", action="store_true", default=True)
+    parser.add_argument("--no-use-time-features", action="store_false", dest="use_time_features")
+    parser.add_argument("--use-traffic-features", action="store_true", default=True)
+    parser.add_argument("--no-use-traffic-features", action="store_false", dest="use_traffic_features")
+    parser.add_argument("--use-agentic-policy-features", action="store_true", default=True)
+    parser.add_argument("--no-use-agentic-policy-features", action="store_false", dest="use_agentic_policy_features")
     args = parser.parse_args()
 
     raw_input_dirs = args.input_dirs or ["dataset/slice_mixed", "dataset/slice_traffic", "dataset"]
@@ -281,6 +298,11 @@ def main() -> None:
         selected_features=selected_features,
         target_col=args.target_col,
         keep_zero_requested_prbs=args.keep_zero_requested_prbs,
+        feature_flags=FeatureFlags(
+            use_time_features=args.use_time_features,
+            use_traffic_features=args.use_traffic_features,
+            use_agentic_policy_features=args.use_agentic_policy_features,
+        ),
     )
     split_summary = split_and_save(per_file_frames, output_dir=Path(args.output_dir))
 

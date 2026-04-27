@@ -4,7 +4,28 @@ import numpy as np
 import torch
 
 
-def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+def _macro_f1(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    labels = sorted(set(y_true.tolist()) | set(y_pred.tolist()))
+    if not labels:
+        return 0.0
+    f1s: list[float] = []
+    for label in labels:
+        tp = float(np.sum((y_true == label) & (y_pred == label)))
+        fp = float(np.sum((y_true != label) & (y_pred == label)))
+        fn = float(np.sum((y_true == label) & (y_pred != label)))
+        precision = tp / (tp + fp + 1e-9)
+        recall = tp / (tp + fn + 1e-9)
+        f1 = 2 * precision * recall / (precision + recall + 1e-9)
+        f1s.append(f1)
+    return float(np.mean(f1s))
+
+
+def evaluate_predictions(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    action_true: np.ndarray | None = None,
+    action_pred: np.ndarray | None = None,
+) -> dict:
     err = y_pred - y_true
     mse = float(np.mean(err**2))
     rmse = float(np.sqrt(mse))
@@ -22,7 +43,6 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     peak_q85 = float(np.quantile(y_true, 0.85))
     peak_mask = y_true > peak_q85
     normal_mask = ~peak_mask
-
     peak_mae = float(np.mean(np.abs(err[peak_mask]))) if np.any(peak_mask) else float("nan")
     normal_mae = float(np.mean(np.abs(err[normal_mask]))) if np.any(normal_mask) else float("nan")
     peak_rmse = float(np.sqrt(np.mean(err[peak_mask] ** 2))) if np.any(peak_mask) else float("nan")
@@ -34,7 +54,7 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     else:
         peak_r2 = float("nan")
 
-    return {
+    payload = {
         "r2": r2,
         "rmse": rmse,
         "mae": mae,
@@ -49,10 +69,28 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
         "peak_r2": peak_r2,
     }
 
+    if action_true is not None and action_pred is not None and len(action_true) == len(action_pred):
+        payload["action_accuracy"] = float((action_true == action_pred).mean())
+        payload["action_macro_f1"] = _macro_f1(action_true, action_pred)
+        unique, counts = np.unique(action_true, return_counts=True)
+        payload["per_action_support"] = {int(k): int(v) for k, v in zip(unique.tolist(), counts.tolist())}
+        pred_u, pred_c = np.unique(action_pred, return_counts=True)
+        payload["action_distribution"] = {int(k): int(v) for k, v in zip(pred_u.tolist(), pred_c.tolist())}
 
-def predict(model, x_test: np.ndarray, device: str) -> np.ndarray:
+    return payload
+
+
+def predict(model, x_test: np.ndarray, device: str):
     model.eval()
     x_tensor = torch.tensor(x_test, dtype=torch.float32, device=device)
     with torch.no_grad():
-        pred = model(x_tensor).detach().cpu().numpy()
+        out = model(x_tensor)
+        if isinstance(out, tuple):
+            pred, logits, confidence = out
+            return (
+                pred.detach().cpu().numpy(),
+                logits.argmax(dim=-1).detach().cpu().numpy(),
+                confidence.detach().cpu().numpy(),
+            )
+        pred = out.detach().cpu().numpy()
     return pred

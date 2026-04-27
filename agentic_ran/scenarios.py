@@ -35,4 +35,11 @@ SCENARIOS: dict[str, ScenarioConfig] = {
     "residual-tcn-32": ScenarioConfig("residual-tcn-32", "residual_tcn", "pytorch", "residual-temporal", 32, 128, 5, 0.15, 64, 7e-4, "weighted_huber", 2.0),
     "residual-liquid-tcn-16": ScenarioConfig("residual-liquid-tcn-16", "residual_liquid_tcn", "pytorch", "residual-liquid-temporal", 16, 128, 4, 0.15, 64, 8e-4, "weighted_huber", 2.0),
     "residual-liquid-tcn-32": ScenarioConfig("residual-liquid-tcn-32", "residual_liquid_tcn", "pytorch", "residual-liquid-temporal", 32, 128, 5, 0.15, 64, 7e-4, "weighted_huber", 2.0),
+    "without_time_features": ScenarioConfig("without_time_features", "mlp", "pytorch", "ablation", 1, 128, 3, 0.2, 64, 8e-4),
+    "with_time_features": ScenarioConfig("with_time_features", "mlp", "pytorch", "ablation", 1, 128, 3, 0.2, 64, 8e-4),
+    "with_time_and_traffic_features": ScenarioConfig("with_time_and_traffic_features", "residual_mlp", "pytorch", "ablation", 1, 128, 4, 0.2, 64, 8e-4),
+    "with_agentic_policy_features": ScenarioConfig("with_agentic_policy_features", "residual_mlp", "pytorch", "ablation", 1, 128, 4, 0.2, 64, 8e-4),
+    "agentic_residual_mlp": ScenarioConfig("agentic_residual_mlp", "agentic_residual_mlp", "pytorch", "agentic", 1, 128, 5, 0.2, 64, 8e-4, "weighted_huber", 2.0),
+    "agentic_liquid_residual": ScenarioConfig("agentic_liquid_residual", "agentic_liquid_residual", "pytorch", "agentic", 16, 128, 3, 0.2, 64, 8e-4, "weighted_huber", 2.0),
+    "agentic_sequence_attention": ScenarioConfig("agentic_sequence_attention", "agentic_sequence_attention", "pytorch", "agentic", 16, 128, 3, 0.2, 64, 8e-4, "weighted_huber", 2.0),
 }
