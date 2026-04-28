@@ -4,7 +4,6 @@ import pandas as pd
 
 from agentic_ran.drl_data import SLICE_OBSERVATION_COLS, split_data
 from agentic_ran.drl_env import RANControlEnv
-from scripts.run_drl_benchmark import MAX_AGENT_BENCHMARK_STEPS
 
 
 def _dataset() -> pd.DataFrame:
@@ -61,7 +60,3 @@ def test_env_reset_step_specs():
     assert isinstance(reward, float)
     assert "control_message" in info
     assert done is False
-
-
-def test_agent_benchmark_step_budget_is_500():
-    assert MAX_AGENT_BENCHMARK_STEPS == 500

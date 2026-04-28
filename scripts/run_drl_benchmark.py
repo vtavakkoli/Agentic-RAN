@@ -12,23 +12,6 @@ from agentic_ran.drl_agents import PPOActorCritic, SlicePolicies, save_slice_pol
 from agentic_ran.drl_data import entire_dataset_from_folder
 from agentic_ran.drl_env import RANControlEnv
 
-MAX_AGENT_BENCHMARK_STEPS = 500
-
-
-def _policy_from_action(action: int) -> str:
-    if action in {1, 10}:
-        return "RR"
-    if action == 2:
-        return "WF"
-    return "PF"
-
-
-def _temperature_proxy(row: pd.Series) -> float:
-    buffer_pressure = float(row.get("dl_buffer [bytes]", 0.0)) + float(row.get("ul_buffer [bytes]", 0.0))
-    error_pressure = float(row.get("tx_errors downlink (%)", 0.0)) + float(row.get("rx_errors uplink (%)", 0.0))
-    return float(25.0 + 0.15 * buffer_pressure + 0.05 * error_pressure)
-
-
 def _set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -55,10 +38,9 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path) -> dict:
 
     obs = env.reset()
     done = False
-    step_idx = 0
     rewards = []
     records = []
-    while (not done) and step_idx < MAX_AGENT_BENCHMARK_STEPS:
+    while not done:
         sid = int(dataset.iloc[min(env.cursor - 1, len(dataset) - 1)]["slice_id"])
         actor = _policy_for_slice(policies, sid)
         action = select_action(actor, obs)
@@ -73,18 +55,14 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path) -> dict:
                 "source_file": row.get("source_file", "unknown"),
                 "y_true": float(row.get("tx_brate downlink [Mbps]", 0.0)),
                 "y_pred": float(row.get("tx_brate downlink [Mbps]", 0.0)),
-                "scenario": "base_case",
+                "scenario": "PPO_only",
                 "model_type": "drl",
                 "action": int(action),
                 "action_name": info.get("action_name", "keep_current"),
-                "policy_name": _policy_from_action(action),
-                "temperature_c": _temperature_proxy(row),
                 "reward": float(reward),
-                "step": int(step_idx),
             }
         )
         obs = next_obs
-        step_idx += 1
 
     seed_dir = out_root / f"seed_{seed}"
     seed_dir.mkdir(parents=True, exist_ok=True)
@@ -98,7 +76,6 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path) -> dict:
         "seed": seed,
         "average_reward": float(np.mean(rewards)) if rewards else 0.0,
         "cumulative_reward": float(np.sum(rewards)),
-        "steps_executed": int(step_idx),
         "action_switch_rate": float(np.mean(np.diff([r["action"] for r in records]) != 0)) if len(records) > 1 else 0.0,
         "safe_fallback_rate": float(np.mean([r["action"] == 10 for r in records])) if records else 0.0,
     }
