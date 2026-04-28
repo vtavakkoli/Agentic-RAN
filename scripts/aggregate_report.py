@@ -161,6 +161,21 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "<p>Composite score remains useful, but these per-metric winners should drive deployment choices.</p>"
     )
 
+    prediction_frames = []
+    for scenario_name in leaderboard["scenario"].tolist():
+        pred_path = results_root / scenario_name / "predictions.csv"
+        if pred_path.exists():
+            prediction_frames.append(pd.read_csv(pred_path))
+    if prediction_frames:
+        ref = prediction_frames[0][["sample_id", "y_true"]].reset_index(drop=True)
+        for cur in prediction_frames[1:]:
+            chk = cur[["sample_id", "y_true"]].reset_index(drop=True)
+            if not ref.equals(chk):
+                raise ValueError("Prediction plots cannot be compared because test samples differ.")
+
+    drl_metrics_path = results_root / "tables" / "drl_seed_metrics.csv"
+    drl_df = pd.read_csv(drl_metrics_path) if drl_metrics_path.exists() else pd.DataFrame()
+
     html = [
         "<html><head><meta charset='utf-8'><title>Final Benchmark Report</title>",
         "<style>body{font-family:Inter,Segoe UI,Arial,sans-serif;margin:28px;background:#f1f5f9;color:#0f172a;line-height:1.4;}"
@@ -169,6 +184,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "th{background:#dbeafe;color:#1e3a8a;} .section{background:white;padding:14px 18px;border-radius:12px;border:1px solid #cbd5e1;margin-bottom:14px;}"
         ".figure img{width:100%;max-width:1100px;height:auto;border-radius:8px;}</style></head><body>",
         "<div class='container'><h1>Final Benchmark Report</h1>",
+        "<div class='section'><h2>Executive summary</h2><p>This report benchmarks forecasting and agentic DRL control for slice-aware RAN scheduling/resource actions across eMBB, MTC, and URLLC.</p></div>",
         f"<p><strong>Best scenario by composite:</strong> {best} | <strong>Average composite:</strong> {score_mean:.4f}</p>",
         "<div class='section'><h2>Model family comparison</h2>",
         _to_html_table(model_family_comparison),
@@ -183,6 +199,9 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "<div class='section'><h2>Traffic-aware feature section</h2><p>UE identifiers are mapped to eMBB/MTC/URLLC classes, slice semantics are inferred (slice 0/1/2), and match/mismatch signals are generated for traffic-vs-slice consistency.</p></div>",
         "<div class='section'><h2>Peak evaluation table</h2>",
         _to_html_table(peak_eval),
+        "</div>",
+        "<div class='section'><h2>DRL policy leaderboard</h2>",
+        _to_html_table(drl_df) if not drl_df.empty else "<p>No DRL policy metrics found.</p>",
         "</div>",
         "<div class='section'><h2>Agentic decision section</h2>",
         _to_html_table(df[["scenario", "action_accuracy", "action_macro_f1", "avg_decision_confidence"]]),
@@ -230,6 +249,10 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         prediction_section.append("<p>No successful scenarios were found, so prediction plots are unavailable.</p>")
     prediction_section.append("</div>")
 
+    html.insert(
+        -1,
+        "<div class='section'><h2>Scientific wording note</h2><p>The previous action-decision metrics were pseudo-label based and are not sufficient to prove real control quality. The updated benchmark evaluates agentic RAN control through offline DRL reward, slice-specific operational KPIs, and policy behavior.</p></div>",
+    )
     html.insert(-1, "\n".join(prediction_section))
 
     report_path = results_root / "report.html"
