@@ -7,8 +7,31 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-def save_predictions(path: Path, y_true, y_pred) -> None:
-    pd.DataFrame({"y_true": y_true, "y_pred": y_pred}).to_csv(path, index=False)
+def save_predictions(
+    path: Path,
+    y_true,
+    y_pred,
+    sample_id=None,
+    global_index=None,
+    timestamp=None,
+    source_file=None,
+    scenario: str = "",
+    model_type: str = "",
+) -> None:
+    n = len(y_true)
+    df = pd.DataFrame(
+        {
+            "sample_id": sample_id if sample_id is not None else list(range(n)),
+            "global_index": global_index if global_index is not None else list(range(n)),
+            "Timestamp": timestamp if timestamp is not None else [""] * n,
+            "source_file": source_file if source_file is not None else ["unknown"] * n,
+            "y_true": y_true,
+            "y_pred": y_pred,
+            "scenario": [scenario] * n,
+            "model_type": [model_type] * n,
+        }
+    )
+    df.to_csv(path, index=False)
 
 
 def save_json(path: Path, payload: dict) -> None:

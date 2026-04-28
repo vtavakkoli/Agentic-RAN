@@ -25,6 +25,7 @@ def evaluate_predictions(
     y_pred: np.ndarray,
     action_true: np.ndarray | None = None,
     action_pred: np.ndarray | None = None,
+    is_agentic_model: bool = False,
 ) -> dict:
     err = y_pred - y_true
     mse = float(np.mean(err**2))
@@ -38,7 +39,7 @@ def evaluate_predictions(
     mape = float(np.mean(np.abs(err) / (np.abs(y_true) + 1e-6)) * 100)
     smape = float(np.mean(2 * np.abs(err) / (np.abs(y_true) + np.abs(y_pred) + 1e-6)) * 100)
     wmape = float(np.sum(np.abs(err)) / (np.sum(np.abs(y_true)) + 1e-6) * 100)
-    composite_score = float(max(0.0, r2) * 100 - (0.15 * rmse + 0.2 * mae + 0.1 * mape + 0.1 * smape + 0.1 * wmape))
+    composite_score = float(max(0.0, r2) * 100 - (0.2 * rmse + 0.25 * mae + 0.15 * smape + 0.15 * wmape))
 
     peak_q85 = float(np.quantile(y_true, 0.85))
     peak_mask = y_true > peak_q85
@@ -69,13 +70,16 @@ def evaluate_predictions(
         "peak_r2": peak_r2,
     }
 
-    if action_true is not None and action_pred is not None and len(action_true) == len(action_pred):
+    if is_agentic_model and action_true is not None and action_pred is not None and len(action_true) == len(action_pred):
         payload["action_accuracy"] = float((action_true == action_pred).mean())
         payload["action_macro_f1"] = _macro_f1(action_true, action_pred)
         unique, counts = np.unique(action_true, return_counts=True)
         payload["per_action_support"] = {int(k): int(v) for k, v in zip(unique.tolist(), counts.tolist())}
         pred_u, pred_c = np.unique(action_pred, return_counts=True)
         payload["action_distribution"] = {int(k): int(v) for k, v in zip(pred_u.tolist(), pred_c.tolist())}
+    else:
+        payload["action_accuracy"] = None
+        payload["action_macro_f1"] = None
 
     return payload
 
