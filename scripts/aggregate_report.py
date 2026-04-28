@@ -77,6 +77,45 @@ def _plot_residual_vs_mlp(success_df: pd.DataFrame, output_path: Path) -> None:
     plt.close(fig)
 
 
+def _plot_base_case_temperature_by_policy(results_root: Path, output_path: Path) -> bool:
+    seed_files = sorted((results_root / "policies").glob("seed_*/predictions.csv"))
+    frames: list[pd.DataFrame] = []
+    for file in seed_files:
+        try:
+            df = pd.read_csv(file)
+        except Exception:
+            continue
+        required = {"scenario", "policy_name", "temperature_c"}
+        if not required.issubset(set(df.columns)):
+            continue
+        base = df.loc[df["scenario"] == "base_case"].copy()
+        if base.empty:
+            continue
+        base["step"] = range(len(base))
+        frames.append(base)
+    if not frames:
+        return False
+
+    data = pd.concat(frames, ignore_index=True)
+    grouped = data.groupby(["policy_name", "step"], as_index=False)["temperature_c"].mean()
+    if grouped.empty:
+        return False
+
+    fig, ax = plt.subplots(figsize=(11, 5))
+    for policy in sorted(grouped["policy_name"].unique().tolist()):
+        part = grouped[grouped["policy_name"] == policy]
+        ax.plot(part["step"], part["temperature_c"], label=policy, linewidth=1.6)
+    ax.set_title("Base-case temperature trajectory by policy")
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Temperature proxy (°C)")
+    ax.grid(alpha=0.25, linestyle="--")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=170)
+    plt.close(fig)
+    return True
+
+
 def aggregate(results_root: Path = Path("results")) -> Path:
     results_root.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -137,8 +176,10 @@ def aggregate(results_root: Path = Path("results")) -> Path:
     figures_dir.mkdir(parents=True, exist_ok=True)
     heatmap_path = figures_dir / "scenario_type_metric_heatmap.png"
     residual_vs_mlp_path = figures_dir / "residual_vs_mlp.png"
+    base_case_temperature_path = figures_dir / "base_case_temperature_trajectory_by_policy.png"
     _plot_group_metric_heatmap(group_success, heatmap_path)
     _plot_residual_vs_mlp(leaderboard, residual_vs_mlp_path)
+    has_temperature_plot = _plot_base_case_temperature_by_policy(results_root, base_case_temperature_path)
 
     model_family_comparison = leaderboard[
         ["scenario", "model_type", "sequence_length", "residual", "temporal", "r2", "rmse", "mae", "smape", "wmape", "composite_score", "action_accuracy", "action_macro_f1"]
@@ -161,6 +202,21 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "<p>Composite score remains useful, but these per-metric winners should drive deployment choices.</p>"
     )
 
+    prediction_frames = []
+    for scenario_name in leaderboard["scenario"].tolist():
+        pred_path = results_root / scenario_name / "predictions.csv"
+        if pred_path.exists():
+            prediction_frames.append(pd.read_csv(pred_path))
+    if prediction_frames:
+        ref = prediction_frames[0][["sample_id", "y_true"]].reset_index(drop=True)
+        for cur in prediction_frames[1:]:
+            chk = cur[["sample_id", "y_true"]].reset_index(drop=True)
+            if not ref.equals(chk):
+                raise ValueError("Prediction plots cannot be compared because test samples differ.")
+
+    drl_metrics_path = results_root / "tables" / "drl_seed_metrics.csv"
+    drl_df = pd.read_csv(drl_metrics_path) if drl_metrics_path.exists() else pd.DataFrame()
+
     html = [
         "<html><head><meta charset='utf-8'><title>Final Benchmark Report</title>",
         "<style>body{font-family:Inter,Segoe UI,Arial,sans-serif;margin:28px;background:#f1f5f9;color:#0f172a;line-height:1.4;}"
@@ -169,6 +225,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "th{background:#dbeafe;color:#1e3a8a;} .section{background:white;padding:14px 18px;border-radius:12px;border:1px solid #cbd5e1;margin-bottom:14px;}"
         ".figure img{width:100%;max-width:1100px;height:auto;border-radius:8px;}</style></head><body>",
         "<div class='container'><h1>Final Benchmark Report</h1>",
+        "<div class='section'><h2>Executive summary</h2><p>This report benchmarks forecasting and agentic DRL control for slice-aware RAN scheduling/resource actions across eMBB, MTC, and URLLC.</p></div>",
         f"<p><strong>Best scenario by composite:</strong> {best} | <strong>Average composite:</strong> {score_mean:.4f}</p>",
         "<div class='section'><h2>Model family comparison</h2>",
         _to_html_table(model_family_comparison),
@@ -183,6 +240,9 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "<div class='section'><h2>Traffic-aware feature section</h2><p>UE identifiers are mapped to eMBB/MTC/URLLC classes, slice semantics are inferred (slice 0/1/2), and match/mismatch signals are generated for traffic-vs-slice consistency.</p></div>",
         "<div class='section'><h2>Peak evaluation table</h2>",
         _to_html_table(peak_eval),
+        "</div>",
+        "<div class='section'><h2>DRL policy leaderboard</h2>",
+        _to_html_table(drl_df) if not drl_df.empty else "<p>No DRL policy metrics found.</p>",
         "</div>",
         "<div class='section'><h2>Agentic decision section</h2>",
         _to_html_table(df[["scenario", "action_accuracy", "action_macro_f1", "avg_decision_confidence"]]),
@@ -199,6 +259,13 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "</div>",
         "<div class='section'><h2>Scenario-type heatmap</h2>",
         f"<div class='figure'><img src='figures/{heatmap_path.name}' alt='Scenario type metric heatmap'></div>",
+        "</div>",
+        "<div class='section'><h2>Agent benchmark: temperature trajectory by policy (base_case)</h2>",
+        (
+            f"<div class='figure'><img src='figures/{base_case_temperature_path.name}' alt='Base case temperature trajectory by policy'></div>"
+            if has_temperature_plot
+            else "<p>No base_case policy-temperature trajectory data found.</p>"
+        ),
         "</div>",
         "<div class='section'><h2>Scientific conclusion</h2>",
         conclusion,
@@ -230,6 +297,10 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         prediction_section.append("<p>No successful scenarios were found, so prediction plots are unavailable.</p>")
     prediction_section.append("</div>")
 
+    html.insert(
+        -1,
+        "<div class='section'><h2>Scientific wording note</h2><p>The previous action-decision metrics were pseudo-label based and are not sufficient to prove real control quality. The updated benchmark evaluates agentic RAN control through offline DRL reward, slice-specific operational KPIs, and policy behavior.</p></div>",
+    )
     html.insert(-1, "\n".join(prediction_section))
 
     report_path = results_root / "report.html"

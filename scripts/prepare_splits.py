@@ -129,7 +129,7 @@ def _standardize_frame(
     if "dl_buffer [bytes]" in working.columns:
         working["dl_buffer [bytes]"] = pd.to_numeric(working["dl_buffer [bytes]"], errors="coerce") / 100000.0
 
-    required_cols = sorted(set(selected_features + [target_col, "Timestamp"]))
+    required_cols = sorted(set(selected_features + [target_col, "Timestamp", "slice_id"]))
     missing = [c for c in required_cols if c not in working.columns]
     if missing:
         raise ValueError(f"Missing required columns from metrics file: {missing}")
@@ -220,6 +220,8 @@ def split_and_save(per_file_frames: list[tuple[str, pd.DataFrame]], output_dir: 
     per_file_rows: dict[str, dict[str, int]] = {}
     for filename, frame in per_file_frames:
         frame = frame.sort_values("Timestamp", kind="stable").reset_index(drop=True)
+        frame["source_file"] = filename
+        frame["sample_id"] = np.arange(len(frame), dtype=np.int64)
         n_rows = len(frame)
         train_end = int(n_rows * 0.60)
         val_end = train_end + int(n_rows * 0.10)
@@ -242,6 +244,11 @@ def split_and_save(per_file_frames: list[tuple[str, pd.DataFrame]], output_dir: 
     train_all = pd.concat(train_parts, ignore_index=True)
     val_all = pd.concat(val_parts, ignore_index=True)
     test_all = pd.concat(test_parts, ignore_index=True)
+    train_all["global_index"] = np.arange(len(train_all), dtype=np.int64)
+    val_all["global_index"] = np.arange(len(train_all), len(train_all) + len(val_all), dtype=np.int64)
+    test_all["global_index"] = np.arange(
+        len(train_all) + len(val_all), len(train_all) + len(val_all) + len(test_all), dtype=np.int64
+    )
 
     train_path = output_dir / "train.csv"
     val_path = output_dir / "val.csv"

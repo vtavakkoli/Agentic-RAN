@@ -98,3 +98,13 @@ services:
       - ./dataset:/app/dataset
       - ./shared_data:/app/shared_data
       - ./results:/app/results
+
+  full-run:
+    <<: *common
+    command: python -m scripts.run_all
+    volumes:
+      - ./agentic_ran:/app/agentic_ran
+      - ./scripts:/app/scripts
+      - ./dataset:/app/dataset
+      - ./shared_data:/app/shared_data
+      - ./results:/app/results

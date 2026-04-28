@@ -7,6 +7,7 @@ from pathlib import Path
 from agentic_ran.data_loading import DEFAULT_FEATURES, DEFAULT_TARGET_COL
 from agentic_ran.scenarios import SCENARIOS
 from scripts.aggregate_report import aggregate
+from scripts.run_drl_benchmark import main as run_drl_benchmark
 from scripts.prepare_splits import build_dataset, split_and_save
 from scripts.run_scenario import run
 
@@ -49,6 +50,7 @@ def run_all(
     )
     for scenario_name in SCENARIOS:
         run(scenario_name, target_col=target_col, log_target=log_target, loss=loss, peak_weight=peak_weight)
+    run_drl_benchmark()
     aggregate(Path("results"))
 
 
