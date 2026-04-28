@@ -260,7 +260,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "<div class='section'><h2>Scenario-type heatmap</h2>",
         f"<div class='figure'><img src='figures/{heatmap_path.name}' alt='Scenario type metric heatmap'></div>",
         "</div>",
-        "<div class='section'><h2>Temperature trajectory by policy (base_case)</h2>",
+        "<div class='section'><h2>Agent benchmark: temperature trajectory by policy (base_case)</h2>",
         (
             f"<div class='figure'><img src='figures/{base_case_temperature_path.name}' alt='Base case temperature trajectory by policy'></div>"
             if has_temperature_plot

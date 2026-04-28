@@ -12,21 +12,7 @@ from agentic_ran.drl_agents import PPOActorCritic, SlicePolicies, save_slice_pol
 from agentic_ran.drl_data import entire_dataset_from_folder
 from agentic_ran.drl_env import RANControlEnv
 
-SIMULATION_DURATION_SECONDS = 50 * 60
-
-
-def _limit_to_duration(dataset: pd.DataFrame, duration_seconds: int = SIMULATION_DURATION_SECONDS) -> pd.DataFrame:
-    if dataset.empty:
-        return dataset
-    work = dataset.copy()
-    work["Timestamp"] = pd.to_datetime(work["Timestamp"], errors="coerce")
-    work = work.dropna(subset=["Timestamp"]).sort_values(["Timestamp", "source_file"], kind="stable").reset_index(drop=True)
-    if work.empty:
-        return work
-    t0 = work["Timestamp"].iloc[0]
-    mask = (work["Timestamp"] - t0).dt.total_seconds() <= float(duration_seconds)
-    limited = work.loc[mask].copy()
-    return limited.reset_index(drop=True)
+MAX_AGENT_BENCHMARK_STEPS = 500
 
 
 def _policy_from_action(action: int) -> str:
@@ -69,9 +55,10 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path) -> dict:
 
     obs = env.reset()
     done = False
+    step_idx = 0
     rewards = []
     records = []
-    while not done:
+    while (not done) and step_idx < MAX_AGENT_BENCHMARK_STEPS:
         sid = int(dataset.iloc[min(env.cursor - 1, len(dataset) - 1)]["slice_id"])
         actor = _policy_for_slice(policies, sid)
         action = select_action(actor, obs)
@@ -93,9 +80,11 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path) -> dict:
                 "policy_name": _policy_from_action(action),
                 "temperature_c": _temperature_proxy(row),
                 "reward": float(reward),
+                "step": int(step_idx),
             }
         )
         obs = next_obs
+        step_idx += 1
 
     seed_dir = out_root / f"seed_{seed}"
     seed_dir.mkdir(parents=True, exist_ok=True)
@@ -109,6 +98,7 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path) -> dict:
         "seed": seed,
         "average_reward": float(np.mean(rewards)) if rewards else 0.0,
         "cumulative_reward": float(np.sum(rewards)),
+        "steps_executed": int(step_idx),
         "action_switch_rate": float(np.mean(np.diff([r["action"] for r in records]) != 0)) if len(records) > 1 else 0.0,
         "safe_fallback_rate": float(np.mean([r["action"] == 10 for r in records])) if records else 0.0,
     }
@@ -116,9 +106,8 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path) -> dict:
 
 def main() -> None:
     dataset = entire_dataset_from_folder(Path("dataset"))
-    dataset = _limit_to_duration(dataset, duration_seconds=SIMULATION_DURATION_SECONDS)
     if len(dataset) < 10:
-        raise RuntimeError("Dataset window for DRL simulation is too small after applying 50-minute duration cap.")
+        raise RuntimeError("Dataset window for DRL simulation is too small.")
     out_root = Path("results/policies")
     out_root.mkdir(parents=True, exist_ok=True)
 

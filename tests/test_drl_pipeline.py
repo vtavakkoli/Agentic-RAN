@@ -4,7 +4,7 @@ import pandas as pd
 
 from agentic_ran.drl_data import SLICE_OBSERVATION_COLS, split_data
 from agentic_ran.drl_env import RANControlEnv
-from scripts.run_drl_benchmark import _limit_to_duration
+from scripts.run_drl_benchmark import MAX_AGENT_BENCHMARK_STEPS
 
 
 def _dataset() -> pd.DataFrame:
@@ -63,10 +63,5 @@ def test_env_reset_step_specs():
     assert done is False
 
 
-def test_limit_to_duration_caps_to_50min():
-    df = _dataset().copy()
-    df["Timestamp"] = pd.date_range("2024-01-01", periods=len(df), freq="5min")
-    capped = _limit_to_duration(df, duration_seconds=50 * 60)
-    assert not capped.empty
-    elapsed = (pd.to_datetime(capped["Timestamp"]).iloc[-1] - pd.to_datetime(capped["Timestamp"]).iloc[0]).total_seconds()
-    assert elapsed <= 50 * 60
+def test_agent_benchmark_step_budget_is_500():
+    assert MAX_AGENT_BENCHMARK_STEPS == 500
