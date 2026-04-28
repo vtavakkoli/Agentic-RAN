@@ -77,6 +77,45 @@ def _plot_residual_vs_mlp(success_df: pd.DataFrame, output_path: Path) -> None:
     plt.close(fig)
 
 
+def _plot_base_case_temperature_by_policy(results_root: Path, output_path: Path) -> bool:
+    seed_files = sorted((results_root / "policies").glob("seed_*/predictions.csv"))
+    frames: list[pd.DataFrame] = []
+    for file in seed_files:
+        try:
+            df = pd.read_csv(file)
+        except Exception:
+            continue
+        required = {"scenario", "policy_name", "temperature_c"}
+        if not required.issubset(set(df.columns)):
+            continue
+        base = df.loc[df["scenario"] == "base_case"].copy()
+        if base.empty:
+            continue
+        base["step"] = range(len(base))
+        frames.append(base)
+    if not frames:
+        return False
+
+    data = pd.concat(frames, ignore_index=True)
+    grouped = data.groupby(["policy_name", "step"], as_index=False)["temperature_c"].mean()
+    if grouped.empty:
+        return False
+
+    fig, ax = plt.subplots(figsize=(11, 5))
+    for policy in sorted(grouped["policy_name"].unique().tolist()):
+        part = grouped[grouped["policy_name"] == policy]
+        ax.plot(part["step"], part["temperature_c"], label=policy, linewidth=1.6)
+    ax.set_title("Base-case temperature trajectory by policy")
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Temperature proxy (°C)")
+    ax.grid(alpha=0.25, linestyle="--")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=170)
+    plt.close(fig)
+    return True
+
+
 def aggregate(results_root: Path = Path("results")) -> Path:
     results_root.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -137,8 +176,10 @@ def aggregate(results_root: Path = Path("results")) -> Path:
     figures_dir.mkdir(parents=True, exist_ok=True)
     heatmap_path = figures_dir / "scenario_type_metric_heatmap.png"
     residual_vs_mlp_path = figures_dir / "residual_vs_mlp.png"
+    base_case_temperature_path = figures_dir / "base_case_temperature_trajectory_by_policy.png"
     _plot_group_metric_heatmap(group_success, heatmap_path)
     _plot_residual_vs_mlp(leaderboard, residual_vs_mlp_path)
+    has_temperature_plot = _plot_base_case_temperature_by_policy(results_root, base_case_temperature_path)
 
     model_family_comparison = leaderboard[
         ["scenario", "model_type", "sequence_length", "residual", "temporal", "r2", "rmse", "mae", "smape", "wmape", "composite_score", "action_accuracy", "action_macro_f1"]
@@ -218,6 +259,13 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "</div>",
         "<div class='section'><h2>Scenario-type heatmap</h2>",
         f"<div class='figure'><img src='figures/{heatmap_path.name}' alt='Scenario type metric heatmap'></div>",
+        "</div>",
+        "<div class='section'><h2>Temperature trajectory by policy (base_case)</h2>",
+        (
+            f"<div class='figure'><img src='figures/{base_case_temperature_path.name}' alt='Base case temperature trajectory by policy'></div>"
+            if has_temperature_plot
+            else "<p>No base_case policy-temperature trajectory data found.</p>"
+        ),
         "</div>",
         "<div class='section'><h2>Scientific conclusion</h2>",
         conclusion,

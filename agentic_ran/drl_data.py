@@ -82,6 +82,8 @@ def _read_single(path: Path, keep_zero_requested_prbs: bool = False) -> pd.DataF
         1.0,
     )
     work["dl_buffer [bytes]"] = work["dl_buffer [bytes]"] / 100000.0
+    # Default slice-aware traffic class fallback (0=eMBB, 1=MTC, 2=URLLC).
+    work["traffic_class_id"] = pd.to_numeric(work["slice_id"], errors="coerce").fillna(-1).astype(np.int64)
     return work.reset_index(drop=True)
 
 
@@ -117,9 +119,13 @@ def entire_dataset_from_folder(folder: Path, keep_zero_requested_prbs: bool = Fa
 
 
 def split_data(df: pd.DataFrame, window_size: int, pad_mode: str = "repeat_last") -> dict[int, np.ndarray]:
+    work = df.copy()
+    for col in SLICE_OBSERVATION_COLS:
+        if col not in work.columns:
+            work[col] = 0.0
     out: dict[int, np.ndarray] = {}
     for sid in [0, 1, 2]:
-        part = df.loc[df["slice_id"] == sid, SLICE_OBSERVATION_COLS].copy()
+        part = work.loc[work["slice_id"] == sid, SLICE_OBSERVATION_COLS].copy()
         for col in SLICE_OBSERVATION_COLS:
             part[col] = pd.to_numeric(part[col], errors="coerce").fillna(0.0)
         arr = part.to_numpy(dtype=np.float32)

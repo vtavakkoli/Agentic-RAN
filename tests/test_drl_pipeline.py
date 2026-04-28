@@ -4,6 +4,7 @@ import pandas as pd
 
 from agentic_ran.drl_data import SLICE_OBSERVATION_COLS, split_data
 from agentic_ran.drl_env import RANControlEnv
+from scripts.run_drl_benchmark import _limit_to_duration
 
 
 def _dataset() -> pd.DataFrame:
@@ -45,6 +46,12 @@ def test_split_data_slice_windows_shape():
     assert windows[0].shape == (8, len(SLICE_OBSERVATION_COLS))
 
 
+def test_split_data_missing_optional_cols_is_robust():
+    df = _dataset().drop(columns=["traffic_class_id"])
+    windows = split_data(df, window_size=4)
+    assert windows[1].shape == (4, len(SLICE_OBSERVATION_COLS))
+
+
 def test_env_reset_step_specs():
     env = RANControlEnv(_dataset(), window_size=6)
     obs = env.reset()
@@ -54,3 +61,12 @@ def test_env_reset_step_specs():
     assert isinstance(reward, float)
     assert "control_message" in info
     assert done is False
+
+
+def test_limit_to_duration_caps_to_50min():
+    df = _dataset().copy()
+    df["Timestamp"] = pd.date_range("2024-01-01", periods=len(df), freq="5min")
+    capped = _limit_to_duration(df, duration_seconds=50 * 60)
+    assert not capped.empty
+    elapsed = (pd.to_datetime(capped["Timestamp"]).iloc[-1] - pd.to_datetime(capped["Timestamp"]).iloc[0]).total_seconds()
+    assert elapsed <= 50 * 60

@@ -12,6 +12,36 @@ from agentic_ran.drl_agents import PPOActorCritic, SlicePolicies, save_slice_pol
 from agentic_ran.drl_data import entire_dataset_from_folder
 from agentic_ran.drl_env import RANControlEnv
 
+SIMULATION_DURATION_SECONDS = 50 * 60
+
+
+def _limit_to_duration(dataset: pd.DataFrame, duration_seconds: int = SIMULATION_DURATION_SECONDS) -> pd.DataFrame:
+    if dataset.empty:
+        return dataset
+    work = dataset.copy()
+    work["Timestamp"] = pd.to_datetime(work["Timestamp"], errors="coerce")
+    work = work.dropna(subset=["Timestamp"]).sort_values(["Timestamp", "source_file"], kind="stable").reset_index(drop=True)
+    if work.empty:
+        return work
+    t0 = work["Timestamp"].iloc[0]
+    mask = (work["Timestamp"] - t0).dt.total_seconds() <= float(duration_seconds)
+    limited = work.loc[mask].copy()
+    return limited.reset_index(drop=True)
+
+
+def _policy_from_action(action: int) -> str:
+    if action in {1, 10}:
+        return "RR"
+    if action == 2:
+        return "WF"
+    return "PF"
+
+
+def _temperature_proxy(row: pd.Series) -> float:
+    buffer_pressure = float(row.get("dl_buffer [bytes]", 0.0)) + float(row.get("ul_buffer [bytes]", 0.0))
+    error_pressure = float(row.get("tx_errors downlink (%)", 0.0)) + float(row.get("rx_errors uplink (%)", 0.0))
+    return float(25.0 + 0.15 * buffer_pressure + 0.05 * error_pressure)
+
 
 def _set_seed(seed: int) -> None:
     random.seed(seed)
@@ -56,10 +86,12 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path) -> dict:
                 "source_file": row.get("source_file", "unknown"),
                 "y_true": float(row.get("tx_brate downlink [Mbps]", 0.0)),
                 "y_pred": float(row.get("tx_brate downlink [Mbps]", 0.0)),
-                "scenario": "PPO_only",
+                "scenario": "base_case",
                 "model_type": "drl",
                 "action": int(action),
                 "action_name": info.get("action_name", "keep_current"),
+                "policy_name": _policy_from_action(action),
+                "temperature_c": _temperature_proxy(row),
                 "reward": float(reward),
             }
         )
@@ -84,6 +116,9 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path) -> dict:
 
 def main() -> None:
     dataset = entire_dataset_from_folder(Path("dataset"))
+    dataset = _limit_to_duration(dataset, duration_seconds=SIMULATION_DURATION_SECONDS)
+    if len(dataset) < 10:
+        raise RuntimeError("Dataset window for DRL simulation is too small after applying 50-minute duration cap.")
     out_root = Path("results/policies")
     out_root.mkdir(parents=True, exist_ok=True)
 
