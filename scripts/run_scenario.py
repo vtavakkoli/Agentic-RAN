@@ -204,7 +204,14 @@ def run(
     else:
         y_pred, y_eval = y_pred_model, y_test
 
-    metrics = evaluate_predictions(y_eval, y_pred, action_true=test_actions, action_pred=action_pred)
+    is_agentic_model = "agentic" in config.model_type
+    metrics = evaluate_predictions(
+        y_eval,
+        y_pred,
+        action_true=test_actions,
+        action_pred=action_pred,
+        is_agentic_model=is_agentic_model,
+    )
 
     model_metadata = {
         "scenario": scenario_name,
@@ -231,7 +238,17 @@ def run(
         **feat_meta,
     }
 
-    save_predictions(results_dir / "predictions.csv", y_eval, y_pred)
+    save_predictions(
+        results_dir / "predictions.csv",
+        y_eval,
+        y_pred,
+        sample_id=test_raw_aligned.get("sample_id", pd.Series(range(len(y_eval)))).tolist()[: len(y_eval)],
+        global_index=test_raw_aligned.get("global_index", pd.Series(range(len(y_eval)))).tolist()[: len(y_eval)],
+        timestamp=test_raw_aligned.get("Timestamp", pd.Series([""] * len(y_eval))).tolist()[: len(y_eval)],
+        source_file=test_raw_aligned.get("source_file", pd.Series(["unknown"] * len(y_eval))).tolist()[: len(y_eval)],
+        scenario=scenario_name,
+        model_type=config.model_type,
+    )
     _write_agentic_outputs(results_dir, test_raw_aligned, y_eval, y_pred, action_pred, confidence)
     save_json(results_dir / "metrics.json", metrics)
     save_json(results_dir / "model_metadata.json", model_metadata)
