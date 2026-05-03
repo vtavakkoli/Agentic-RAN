@@ -4,6 +4,15 @@ import numpy as np
 import pandas as pd
 
 
+def _make_sequences(x: np.ndarray, y: np.ndarray, sequence_length: int) -> tuple[np.ndarray, np.ndarray]:
+    if sequence_length <= 1:
+        return x, y
+    if len(x) <= sequence_length:
+        return np.empty((0, sequence_length, x.shape[1]), dtype=np.float32), np.empty((0,), dtype=np.float32)
+    windows = np.lib.stride_tricks.sliding_window_view(x, window_shape=sequence_length, axis=0)[:-1]
+    return np.ascontiguousarray(windows, dtype=np.float32), np.ascontiguousarray(y[sequence_length:], dtype=np.float32)
+
+
 def build_features(df: pd.DataFrame, sequence_length: int) -> tuple[np.ndarray, np.ndarray, dict]:
     num_df = df.select_dtypes(include=["number"]).dropna().copy()
     if "target" not in num_df.columns:
@@ -17,16 +26,7 @@ def build_features(df: pd.DataFrame, sequence_length: int) -> tuple[np.ndarray, 
     x_std = x.std(axis=0, keepdims=True) + 1e-6
     x_scaled = (x - x_mean) / x_std
 
-    if sequence_length > 1:
-        xs, ys = [], []
-        for idx in range(sequence_length, len(x_scaled)):
-            xs.append(x_scaled[idx - sequence_length : idx])
-            ys.append(y[idx])
-        x_final = np.asarray(xs, dtype=np.float32)
-        y_final = np.asarray(ys, dtype=np.float32)
-    else:
-        x_final = x_scaled
-        y_final = y
+    x_final, y_final = _make_sequences(x_scaled, y, sequence_length)
 
     metadata = {
         "dataset_rows": int(num_df.shape[0]),
@@ -87,13 +87,7 @@ def build_features_for_pre_split(
     x_test = _scale(x_test)
 
     def _to_sequences(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        if sequence_length <= 1:
-            return x, y
-        xs, ys = [], []
-        for idx in range(sequence_length, len(x)):
-            xs.append(x[idx - sequence_length : idx])
-            ys.append(y[idx])
-        return np.asarray(xs, dtype=np.float32), np.asarray(ys, dtype=np.float32)
+        return _make_sequences(x, y, sequence_length)
 
     train_set = _to_sequences(x_train, y_train)
     val_set = _to_sequences(x_val, y_val)

@@ -52,6 +52,7 @@ def train_model(
     peak_weight: float = 2.0,
     action_loss_alpha: float = 0.5,
     early_stopping_patience: int = 5,
+    checkpoint_path: Path | None = None,
 ):
     x_train, y_train = train_set[0], train_set[1]
     x_val, y_val = val_set[0], val_set[1]
@@ -61,12 +62,13 @@ def train_model(
     x_train, y_train, a_train = _to_tensor(x_train, y_train, train_actions)
     x_val, y_val, a_val = _to_tensor(x_val, y_val, val_actions)
 
+    pin_memory = device.startswith("cuda")
     if a_train is None:
-        train_loader = DataLoader(TensorDataset(x_train, y_train), batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(TensorDataset(x_val, y_val), batch_size=batch_size, shuffle=False)
+        train_loader = DataLoader(TensorDataset(x_train, y_train), batch_size=batch_size, shuffle=True, pin_memory=pin_memory)
+        val_loader = DataLoader(TensorDataset(x_val, y_val), batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
     else:
-        train_loader = DataLoader(TensorDataset(x_train, y_train, a_train), batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(TensorDataset(x_val, y_val, a_val), batch_size=batch_size, shuffle=False)
+        train_loader = DataLoader(TensorDataset(x_train, y_train, a_train), batch_size=batch_size, shuffle=True, pin_memory=pin_memory)
+        val_loader = DataLoader(TensorDataset(x_val, y_val, a_val), batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
 
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
@@ -123,6 +125,8 @@ def train_model(
         if val_loss < best_val - 1e-7:
             best_val = val_loss
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            if checkpoint_path is not None:
+                torch.save(best_state, checkpoint_path)
             no_improve = 0
         else:
             no_improve += 1

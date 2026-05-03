@@ -42,4 +42,8 @@ SCENARIOS: dict[str, ScenarioConfig] = {
     "agentic_residual_mlp": ScenarioConfig("agentic_residual_mlp", "agentic_residual_mlp", "pytorch", "agentic", 1, 128, 5, 0.2, 64, 8e-4, "weighted_huber", 2.0),
     "agentic_liquid_residual": ScenarioConfig("agentic_liquid_residual", "agentic_liquid_residual", "pytorch", "agentic", 16, 128, 3, 0.2, 64, 8e-4, "weighted_huber", 2.0),
     "agentic_sequence_attention": ScenarioConfig("agentic_sequence_attention", "agentic_sequence_attention", "pytorch", "agentic", 16, 128, 3, 0.2, 64, 8e-4, "weighted_huber", 2.0),
+    "patchtst-sota": ScenarioConfig("patchtst-sota", "patchtst", "pytorch", "sota-temporal", 32, 128, 3, 0.15, 128, 8e-4, "weighted_huber", 2.0),
+    "tsmixer-sota": ScenarioConfig("tsmixer-sota", "tsmixer", "pytorch", "sota-mixer", 24, 128, 4, 0.15, 128, 8e-4, "weighted_huber", 2.0),
+    "kan-sota": ScenarioConfig("kan-sota", "kan", "pytorch", "sota-kan", 1, 192, 4, 0.1, 128, 8e-4, "weighted_huber", 2.0),
+    "agentic_patch_kan_mixer": ScenarioConfig("agentic_patch_kan_mixer", "agentic_patch_kan_mixer", "pytorch", "agentic-sota", 32, 128, 4, 0.15, 128, 7e-4, "weighted_huber", 2.0),
 }

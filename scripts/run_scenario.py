@@ -25,8 +25,23 @@ from agentic_ran.training import train_model
 def _pseudo_actions(df: pd.DataFrame) -> np.ndarray:
     if df.empty:
         return np.asarray([], dtype=np.int64)
-    decisions = df.apply(lambda r: recommend_action(r.to_dict())["action_id"], axis=1)
-    return decisions.to_numpy(dtype=np.int64)
+    prb_pressure = df.get("prb_pressure", pd.Series(np.zeros(len(df), dtype=float))).to_numpy(dtype=float)
+    ratio = df.get("ratio_granted_req", pd.Series(np.ones(len(df), dtype=float))).to_numpy(dtype=float)
+    buffer_dl = df.get("buffer_pressure_dl", pd.Series(np.zeros(len(df), dtype=float))).to_numpy(dtype=float)
+    traffic = df.get("traffic_class", pd.Series(["unknown"] * len(df))).astype(str).to_numpy()
+
+    actions = np.zeros(len(df), dtype=np.int64)
+    actions[(prb_pressure > 1.3) & (traffic == "eMBB")] = 1
+    actions[(prb_pressure > 1.3) & (traffic == "MTC")] = 2
+    actions[(prb_pressure > 1.2) & (traffic == "URLLC")] = 3
+    actions[(ratio < 0.85) & (traffic == "eMBB")] = 1
+    actions[(ratio < 0.85) & (traffic == "MTC")] = 2
+    actions[(ratio < 0.90) & (traffic == "URLLC")] = 3
+    actions[(prb_pressure < 0.75) & (traffic == "eMBB")] = 4
+    actions[(prb_pressure < 0.75) & (traffic == "MTC")] = 5
+    actions[(prb_pressure < 0.80) & (traffic == "URLLC")] = 6
+    actions[(buffer_dl > np.quantile(buffer_dl, 0.90)) & (traffic == "URLLC")] = 8
+    return actions
 
 
 def _align_actions(actions: np.ndarray, sequence_length: int) -> np.ndarray:
@@ -124,6 +139,7 @@ def run(
         "agentic_residual_mlp",
         "agentic_liquid_residual",
         "agentic_sequence_attention",
+        "agentic_patch_kan_mixer",
     }
 
     flags = FeatureFlags(
@@ -189,6 +205,7 @@ def run(
         log_path=results_dir / "training_log.csv",
         loss_name=config.loss,
         peak_weight=config.peak_weight,
+        checkpoint_path=results_dir / "best_model.pt",
     )
 
     pred_out = predict(model, x_test, device=device)
@@ -264,7 +281,7 @@ if __name__ == "__main__":
     parser.add_argument("--log-target", action="store_true")
     parser.add_argument("--loss", choices=["mse", "huber", "weighted_huber"], default=None)
     parser.add_argument("--peak-weight", type=float, default=None)
-    parser.add_argument("--model", choices=["mlp", "attention", "liquid", "xlstm", "residual_mlp", "residual_tcn", "residual_liquid_tcn", "agentic_mlp", "agentic_residual_mlp", "agentic_sequence_model", "agentic_sequence_attention", "agentic_liquid_model", "agentic_liquid_residual"], default=None)
+    parser.add_argument("--model", choices=["mlp", "attention", "liquid", "xlstm", "patchtst", "tsmixer", "kan", "agentic_patch_kan_mixer", "residual_mlp", "residual_tcn", "residual_liquid_tcn", "agentic_mlp", "agentic_residual_mlp", "agentic_sequence_model", "agentic_sequence_attention", "agentic_liquid_model", "agentic_liquid_residual"], default=None)
     parser.add_argument("--sequence-length", type=int, default=None)
     parser.add_argument("--use-time-features", action="store_true", default=True)
     parser.add_argument("--no-use-time-features", action="store_false", dest="use_time_features")
