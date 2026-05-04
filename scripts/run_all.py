@@ -41,6 +41,7 @@ def run_all(
     loss: str | None = None,
     peak_weight: float | None = None,
 ) -> None:
+    drl_episodes = int(os.getenv("DRL_EPISODES", "100"))
     total_steps = len(SCENARIOS) + 2
     step = 1
     print(f"[pipeline] Step {step}/{total_steps}: preparing data")
@@ -58,9 +59,9 @@ def run_all(
         run(scenario_name, target_col=target_col, log_target=log_target, loss=loss, peak_weight=peak_weight)
         remaining = total_steps - step
         print(f"[pipeline] Scenario {scenario_name} complete ({remaining} major steps left)")
-    step += 1
+        step += 1
     print(f"[pipeline] Step {step}/{total_steps}: DRL benchmark")
-    run_drl_benchmark(episodes=500)
+    run_drl_benchmark(episodes=drl_episodes)
     print(f"[pipeline] Step {step}/{total_steps} complete")
     step += 1
     print(f"[pipeline] Step {step}/{total_steps}: aggregating report")

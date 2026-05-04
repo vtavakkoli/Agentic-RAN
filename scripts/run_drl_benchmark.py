@@ -39,7 +39,7 @@ def _vectorized_select_actions(policies: SlicePolicies, obs_batch: np.ndarray, s
     return actions
 
 
-def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path, episodes: int = 500) -> dict:
+def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path, episodes: int = 100) -> dict:
     _set_seed(seed)
     env = RANControlEnv(dataset=dataset, window_size=8)
     obs_dim = env.observation_spec.shape[0]
@@ -115,7 +115,7 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path, episodes: int
     }
 
 
-def main(episodes: int = 500) -> None:
+def main(episodes: int = 100) -> None:
     dataset = entire_dataset_from_folder(Path("dataset"))
     if len(dataset) < 10:
         raise RuntimeError("Dataset window for DRL simulation is too small.")
@@ -131,6 +131,6 @@ def main(episodes: int = 500) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run DRL benchmark.")
-    parser.add_argument("--episodes", type=int, default=500)
+    parser.add_argument("--episodes", type=int, default=100)
     args = parser.parse_args()
     main(episodes=args.episodes)
