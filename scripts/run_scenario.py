@@ -107,6 +107,7 @@ def run(
     use_agentic_policy: bool = True,
     use_action_head: bool = True,
 ) -> None:
+    print(f"[train:{scenario_name}] Starting scenario training/evaluation")
     if scenario_name not in SCENARIOS:
         raise ValueError(f"Unknown scenario: {scenario_name}. Available: {', '.join(SCENARIOS)}")
 
@@ -207,6 +208,8 @@ def run(
         peak_weight=config.peak_weight,
         checkpoint_path=results_dir / "best_model.pt",
     )
+    completed_epochs = len(history)
+    print(f"[train:{scenario_name}] Training complete ({completed_epochs}/{epochs} epochs)")
 
     pred_out = predict(model, x_test, device=device)
     if isinstance(pred_out, tuple):
@@ -272,6 +275,7 @@ def run(
     write_data_summary(results_dir / "data_summary.json", data_summary)
     save_json(results_dir / "status.json", {"status": "success", "error": None})
     save_plots(plots_dir, y_eval, y_pred, history, scenario_name)
+    print(f"[eval:{scenario_name}] Evaluation complete | R2={metrics['r2']:.4f} RMSE={metrics['rmse']:.4f}")
 
 
 if __name__ == "__main__":
