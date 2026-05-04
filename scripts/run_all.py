@@ -41,6 +41,10 @@ def run_all(
     loss: str | None = None,
     peak_weight: float | None = None,
 ) -> None:
+    drl_episodes = int(os.getenv("DRL_EPISODES", "100"))
+    total_steps = len(SCENARIOS) + 2
+    step = 1
+    print(f"[pipeline] Step {step}/{total_steps}: preparing data")
     prepare_data(
         max_files=max_files,
         rows_per_file=rows_per_file,
@@ -48,10 +52,21 @@ def run_all(
         target_col=target_col,
         keep_zero_requested_prbs=keep_zero_requested_prbs,
     )
+    print(f"[pipeline] Step {step}/{total_steps} complete")
+    step += 1
     for scenario_name in SCENARIOS:
+        print(f"[pipeline] Step {step}/{total_steps}: scenario {scenario_name}")
         run(scenario_name, target_col=target_col, log_target=log_target, loss=loss, peak_weight=peak_weight)
-    run_drl_benchmark()
+        remaining = total_steps - step
+        print(f"[pipeline] Scenario {scenario_name} complete ({remaining} major steps left)")
+        step += 1
+    print(f"[pipeline] Step {step}/{total_steps}: DRL benchmark")
+    run_drl_benchmark(episodes=drl_episodes)
+    print(f"[pipeline] Step {step}/{total_steps} complete")
+    step += 1
+    print(f"[pipeline] Step {step}/{total_steps}: aggregating report")
     aggregate(Path("results"))
+    print("[pipeline] All training/tests/evaluation tasks complete")
 
 
 if __name__ == "__main__":
