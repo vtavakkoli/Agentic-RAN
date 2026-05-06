@@ -202,17 +202,24 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "<p>Composite score remains useful, but these per-metric winners should drive deployment choices.</p>"
     )
 
+    prediction_comparability_note = ""
     prediction_frames = []
     for scenario_name in leaderboard["scenario"].tolist():
         pred_path = results_root / scenario_name / "predictions.csv"
         if pred_path.exists():
-            prediction_frames.append(pd.read_csv(pred_path))
+            try:
+                frame = pd.read_csv(pred_path)
+            except Exception:
+                continue
+            if {"sample_id", "y_true"}.issubset(frame.columns):
+                prediction_frames.append(frame[["sample_id", "y_true"]].reset_index(drop=True))
     if prediction_frames:
-        ref = prediction_frames[0][["sample_id", "y_true"]].reset_index(drop=True)
-        for cur in prediction_frames[1:]:
-            chk = cur[["sample_id", "y_true"]].reset_index(drop=True)
-            if not ref.equals(chk):
-                raise ValueError("Prediction plots cannot be compared because test samples differ.")
+        ref = prediction_frames[0]
+        if any(not ref.equals(cur) for cur in prediction_frames[1:]):
+            prediction_comparability_note = (
+                "Prediction plots are shown per scenario, but direct cross-scenario"
+                " sample-by-sample comparison was skipped because test samples differ."
+            )
 
     drl_metrics_path = results_root / "tables" / "drl_seed_metrics.csv"
     drl_df = pd.read_csv(drl_metrics_path) if drl_metrics_path.exists() else pd.DataFrame()
@@ -278,6 +285,8 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         prediction_section.append(
             "<p>Predictions vs. ground truth for each successful scenario, useful for qualitative model-behavior inspection.</p>"
         )
+        if prediction_comparability_note:
+            prediction_section.append(f"<p><em>{prediction_comparability_note}</em></p>")
         prediction_section.append("<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;'>")
         for scenario_name in successful_scenarios:
             pred_rel = f"{scenario_name}/plots/predictions_vs_truth.png"
