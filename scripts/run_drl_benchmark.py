@@ -56,6 +56,7 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path, episodes: int
     observations.append(obs)
     rewards = []
     records = []
+    total_steps = len(dataset)
     while not done:
         sid = int(dataset.iloc[min(env.cursor - 1, len(dataset) - 1)]["slice_id"])
         slice_ids.append(sid)
@@ -80,6 +81,10 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path, episodes: int
             }
         )
         obs = next_obs
+        if len(records) % max(1, total_steps // 10) == 0 or done:
+            trained = len(records)
+            left = max(total_steps - trained, 0)
+            print(f"[drl][seed={seed}] trajectory progress {trained}/{total_steps} steps | {left} left")
         if not done:
             observations.append(obs)
 
@@ -115,10 +120,13 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path, episodes: int
     }
 
 
-def main(episodes: int = 100) -> None:
+def main(episodes: int = 100, max_samples: int = 5000) -> None:
     dataset = entire_dataset_from_folder(Path("dataset"))
     if len(dataset) < 10:
         raise RuntimeError("Dataset window for DRL simulation is too small.")
+    if max_samples > 0 and len(dataset) > max_samples:
+        dataset = dataset.iloc[:max_samples].reset_index(drop=True)
+        print(f"[drl] using reduced dataset for faster training: {len(dataset)} samples")
     out_root = Path("results/policies")
     out_root.mkdir(parents=True, exist_ok=True)
 
@@ -132,5 +140,6 @@ def main(episodes: int = 100) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run DRL benchmark.")
     parser.add_argument("--episodes", type=int, default=100)
+    parser.add_argument("--max-samples", type=int, default=5000)
     args = parser.parse_args()
-    main(episodes=args.episodes)
+    main(episodes=args.episodes, max_samples=args.max_samples)
