@@ -131,3 +131,12 @@ However, you should also inspect individual metrics separately because other bas
 
 ## License
 This project is licensed under the **MIT License**. See `LICENSE`.
+
+
+## New benchmark scopes
+```bash
+docker-compose up --build benchmark-main
+docker-compose up --build benchmark-appendix
+docker-compose up --build benchmark-all
+docker-compose up --build report
+```
