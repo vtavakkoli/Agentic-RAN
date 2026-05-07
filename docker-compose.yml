@@ -9,22 +9,18 @@ x-common: &common
     PYTHONPATH: /app
 
 services:
-  prepare-data:
+  generate_data:
     <<: *common
-    command: python -m scripts.prepare_splits --input-dir dataset/slice_mixed --input-dir dataset/slice_traffic --output-dir shared_data/splits
+    command: python -m scripts.generate_data
 
-  benchmark-main:
+  train:
     <<: *common
-    command: python -m src.benchmark --benchmark-scope main
+    command: python -m scripts.train
 
-  benchmark-appendix:
+  test:
     <<: *common
-    command: python -m src.benchmark --benchmark-scope appendix
+    command: python -m scripts.test
 
-  benchmark-all:
+  run-all:
     <<: *common
-    command: python -m src.benchmark --benchmark-scope all
-
-  report:
-    <<: *common
-    command: python -m src.report
+    command: python -m scripts.run_all
