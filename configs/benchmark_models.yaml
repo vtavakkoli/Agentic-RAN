@@ -1,5 +1,31 @@
-{
-  "main_models": ["mlp_lightweight_32","mlp_balanced_small","mlp_with_time_features","residual_mlp_128","kan_baseline","gradient_boosting_baseline","agentic_residual_mlp","graph_actor_critic_ran","masked_graph_ppo_ran","safegraphagent_ran"],
-  "appendix_models": ["attention_baseline","liquid_baseline","xlstm_baseline","residual_tcn_16","residual_tcn_32","residual_liquid_tcn_16","residual_liquid_tcn_32","patchtst_baseline","tsmixer_baseline","agentic_liquid_residual","agentic_sequence_attention","agentic_patch_kan_mixer"],
-  "optional_foundation_models": ["chronos_bolt","timesfm","tiny_time_mixer","moirai"]
-}
+main_models:
+  - mlp_lightweight_32
+  - mlp_balanced_small
+  - mlp_with_time_features
+  - residual_mlp_128
+  - kan_baseline
+  - gradient_boosting_baseline
+  - agentic_residual_mlp
+  - graph_actor_critic_ran
+  - masked_graph_ppo_ran
+  - safegraphagent_ran
+
+appendix_models:
+  - attention_baseline
+  - liquid_baseline
+  - xlstm_baseline
+  - residual_tcn_16
+  - residual_tcn_32
+  - residual_liquid_tcn_16
+  - residual_liquid_tcn_32
+  - patchtst_baseline
+  - tsmixer_baseline
+  - agentic_liquid_residual
+  - agentic_sequence_attention
+  - agentic_patch_kan_mixer
+
+optional_foundation_models:
+  - chronos_bolt
+  - timesfm
+  - tiny_time_mixer
+  - moirai
