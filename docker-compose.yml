@@ -108,3 +108,19 @@ services:
       - ./dataset:/app/dataset
       - ./shared_data:/app/shared_data
       - ./results:/app/results
+
+  benchmark-main:
+    <<: *common
+    command: python -m src.benchmark --benchmark-scope main
+
+  benchmark-all:
+    <<: *common
+    command: python -m src.benchmark --benchmark-scope all
+
+  benchmark-appendix:
+    <<: *common
+    command: python -m src.benchmark --benchmark-scope appendix
+
+  report:
+    <<: *common
+    command: python -m src.report
