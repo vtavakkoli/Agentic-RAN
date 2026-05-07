@@ -2,109 +2,29 @@ x-common: &common
   build: .
   image: agentic-ran:latest
   volumes:
-    - ./agentic_ran:/app/agentic_ran
-    - ./scripts:/app/scripts
-    - ./shared_data:/app/shared_data
-    - ./results:/app/results
+    - ./:/app
+  working_dir: /app
   environment:
     EPOCHS: ${EPOCHS:-5}
+    PYTHONPATH: /app
 
 services:
-
   prepare-data:
     <<: *common
     command: python -m scripts.prepare_splits --input-dir dataset/slice_mixed --input-dir dataset/slice_traffic --output-dir shared_data/splits
-    volumes:
-      - ./agentic_ran:/app/agentic_ran
-      - ./scripts:/app/scripts
-      - ./dataset:/app/dataset
-      - ./shared_data:/app/shared_data
-      - ./results:/app/results
 
-  lightweight-32:
+  benchmark-main:
     <<: *common
-    depends_on:
-      - prepare-data
-    command: python -m scripts.run_scenario --scenario lightweight-32
+    command: python -m src.benchmark --benchmark-scope main
 
-  lightweight-64:
+  benchmark-appendix:
     <<: *common
-    depends_on:
-      - prepare-data
-    command: python -m scripts.run_scenario --scenario lightweight-64
+    command: python -m src.benchmark --benchmark-scope appendix
 
-  balanced-small:
+  benchmark-all:
     <<: *common
-    depends_on:
-      - prepare-data
-    command: python -m scripts.run_scenario --scenario balanced-small
+    command: python -m src.benchmark --benchmark-scope all
 
-  balanced-medium:
+  report:
     <<: *common
-    depends_on:
-      - prepare-data
-    command: python -m scripts.run_scenario --scenario balanced-medium
-
-  deep-performance:
-    <<: *common
-    depends_on:
-      - prepare-data
-    command: python -m scripts.run_scenario --scenario deep-performance
-
-  ultra-performance:
-    <<: *common
-    depends_on:
-      - prepare-data
-    command: python -m scripts.run_scenario --scenario ultra-performance
-
-  attention-baseline:
-    <<: *common
-    depends_on:
-      - prepare-data
-    command: python -m scripts.run_scenario --scenario attention-baseline
-
-  liquid-baseline:
-    <<: *common
-    depends_on:
-      - prepare-data
-    command: python -m scripts.run_scenario --scenario liquid-baseline
-
-  xlstm-baseline:
-    <<: *common
-    depends_on:
-      - prepare-data
-    command: python -m scripts.run_scenario --scenario xlstm-baseline
-
-  aggregator:
-    <<: *common
-    command: python -m scripts.aggregate_report
-    depends_on:
-      - lightweight-32
-      - lightweight-64
-      - balanced-small
-      - balanced-medium
-      - deep-performance
-      - ultra-performance
-      - attention-baseline
-      - liquid-baseline
-      - xlstm-baseline
-
-  run-all:
-    <<: *common
-    command: python -m scripts.run_all
-    volumes:
-      - ./agentic_ran:/app/agentic_ran
-      - ./scripts:/app/scripts
-      - ./dataset:/app/dataset
-      - ./shared_data:/app/shared_data
-      - ./results:/app/results
-
-  full-run:
-    <<: *common
-    command: python -m scripts.run_all
-    volumes:
-      - ./agentic_ran:/app/agentic_ran
-      - ./scripts:/app/scripts
-      - ./dataset:/app/dataset
-      - ./shared_data:/app/shared_data
-      - ./results:/app/results
+    command: python -m src.report
