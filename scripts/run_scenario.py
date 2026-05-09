@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from collections import Counter
@@ -20,6 +21,8 @@ from agentic_ran.preprocessing import build_features, build_features_for_pre_spl
 from agentic_ran.reporting import save_json, save_plots, save_predictions
 from agentic_ran.scenarios import SCENARIOS
 from agentic_ran.training import train_model
+
+MAX_EVAL_SEQUENCE_LENGTH = int(os.getenv("MAX_EVAL_SEQUENCE_LENGTH", "32"))
 
 
 def _pseudo_actions(df: pd.DataFrame) -> np.ndarray:
@@ -181,6 +184,12 @@ def run(
         train_actions, val_actions, test_actions = a_train[0], a_val[0], a_test[0]
         test_raw_aligned = df.iloc[-len(y_test):].reset_index(drop=True)
 
+    if config.sequence_length > 1:
+        for split_name, arr in (("train", x_train), ("val", x_val), ("test", x_test)):
+            assert arr.ndim == 3 and arr.shape[1] == config.sequence_length, (
+                f"{split_name} temporal input must be (batch, sequence_length, num_features); got {arr.shape}"
+            )
+
     if log_target:
         y_train_model = np.log1p(np.clip(y_train, a_min=0.0, a_max=None))
         y_val_model = np.log1p(np.clip(y_val, a_min=0.0, a_max=None))
@@ -224,6 +233,21 @@ def run(
     else:
         y_pred, y_eval = y_pred_model, y_test
 
+    if config.sequence_length <= 1:
+        eval_trim = MAX_EVAL_SEQUENCE_LENGTH
+    else:
+        eval_trim = max(0, MAX_EVAL_SEQUENCE_LENGTH - config.sequence_length)
+    if eval_trim > 0:
+        y_eval = y_eval[eval_trim:]
+        y_pred = y_pred[eval_trim:]
+        test_actions = test_actions[eval_trim:]
+        test_raw_aligned = test_raw_aligned.iloc[eval_trim:].reset_index(drop=True)
+
+    if len(test_actions) > len(y_eval):
+        test_actions = test_actions[: len(y_eval)]
+    if len(test_raw_aligned) > len(y_eval):
+        test_raw_aligned = test_raw_aligned.iloc[: len(y_eval)].reset_index(drop=True)
+
     is_agentic_model = "agentic" in config.model_type
     metrics = evaluate_predictions(
         y_eval,
@@ -232,6 +256,11 @@ def run(
         action_pred=action_pred,
         is_agentic_model=is_agentic_model,
     )
+
+    test_global_indices = test_raw_aligned.get("global_index", pd.Series(range(len(y_eval)))).tolist()[: len(y_eval)]
+    test_y = np.asarray(y_eval, dtype=float).tolist()
+    test_global_indices_hash = hashlib.sha256(json.dumps(test_global_indices).encode("utf-8")).hexdigest()
+    test_y_hash = hashlib.sha256(json.dumps(test_y).encode("utf-8")).hexdigest()
 
     model_metadata = {
         "scenario": scenario_name,
@@ -255,6 +284,9 @@ def run(
         "use_traffic_features": scenario_use_traffic,
         "use_agentic_policy": scenario_use_agentic,
         "use_action_head": use_action_head,
+        "max_eval_sequence_length": MAX_EVAL_SEQUENCE_LENGTH,
+        "test_global_indices_hash": test_global_indices_hash,
+        "test_y_hash": test_y_hash,
         **feat_meta,
     }
 
@@ -263,7 +295,7 @@ def run(
         y_eval,
         y_pred,
         sample_id=test_raw_aligned.get("sample_id", pd.Series(range(len(y_eval)))).tolist()[: len(y_eval)],
-        global_index=test_raw_aligned.get("global_index", pd.Series(range(len(y_eval)))).tolist()[: len(y_eval)],
+        global_index=test_global_indices,
         timestamp=test_raw_aligned.get("Timestamp", pd.Series([""] * len(y_eval))).tolist()[: len(y_eval)],
         source_file=test_raw_aligned.get("source_file", pd.Series(["unknown"] * len(y_eval))).tolist()[: len(y_eval)],
         scenario=scenario_name,

@@ -2,11 +2,33 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 from scripts.aggregate_report import aggregate
+
+
+def _assert_prediction_alignment(results_root: Path) -> None:
+    hashes = set()
+    for scenario_dir in sorted(results_root.iterdir()):
+        if not scenario_dir.is_dir():
+            continue
+        status = scenario_dir / "status.json"
+        pred = scenario_dir / "predictions.csv"
+        if not status.exists() or not pred.exists():
+            continue
+        if '"status": "success"' not in status.read_text(encoding="utf-8"):
+            continue
+        df = pd.read_csv(pred)
+        if "global_index" not in df.columns:
+            raise AssertionError(f"Missing global_index in {pred}")
+        hashes.add(tuple(df["global_index"].tolist()))
+    if len(hashes) > 1:
+        raise AssertionError("Successful scenarios do not share identical effective test_global_index values.")
 
 
 def main() -> None:
     aggregate(Path("results"))
+    _assert_prediction_alignment(Path("results"))
 
     test_dir = Path("results/test")
     test_dir.mkdir(parents=True, exist_ok=True)
