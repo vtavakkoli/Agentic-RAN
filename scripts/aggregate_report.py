@@ -10,7 +10,7 @@ import pandas as pd
 from agentic_ran.scenarios import SCENARIOS
 
 
-METRIC_COLS = ["r2", "rmse", "mae", "mape", "smape", "wmape", "composite_score", "action_accuracy", "action_macro_f1"]
+METRIC_COLS = ["r2", "rmse", "mae", "smape", "wmape", "composite_score", "action_accuracy", "action_macro_f1"]
 PEAK_METRIC_COLS = ["peak_mae", "normal_mae", "peak_rmse", "peak_r2"]
 HIGHER_IS_BETTER = {"r2", "composite_score", "peak_r2"}
 
@@ -152,6 +152,8 @@ def aggregate(results_root: Path = Path("results")) -> Path:
             "source_root": data_summary.get("source_root", "dataset"),
             "source_files_first5": ", ".join(source_files[:5]),
             "avg_decision_confidence": agentic_summary.get("average_confidence", float("nan")),
+            "test_global_indices_hash": (metadata or {}).get("test_global_indices_hash"),
+            "test_y_hash": (metadata or {}).get("test_y_hash"),
             "notes_or_errors": status.get("error") or "",
         }
         for m in [*METRIC_COLS, *PEAK_METRIC_COLS]:
@@ -162,7 +164,12 @@ def aggregate(results_root: Path = Path("results")) -> Path:
     for col in ["dataset_rows", "epochs", "rows_train", "rows_val", "rows_test", "metrics_file_count", *METRIC_COLS, *PEAK_METRIC_COLS]:
         df[col] = _coerce_numeric(df[col])
 
-    leaderboard = df[df["status"] == "success"].sort_values("composite_score", ascending=False).copy()
+    success_df = df[df["status"] == "success"].copy()
+    hash_ok = (
+        len(success_df["test_global_indices_hash"].dropna().unique()) <= 1
+        and len(success_df["test_y_hash"].dropna().unique()) <= 1
+    )
+    leaderboard = success_df.sort_values("composite_score", ascending=False).copy() if hash_ok else pd.DataFrame(columns=success_df.columns)
     best = leaderboard.iloc[0]["scenario"] if not leaderboard.empty else "n/a"
     score_mean = leaderboard["composite_score"].mean() if not leaderboard.empty else float("nan")
 
@@ -234,8 +241,13 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "<div class='container'><h1>Final Benchmark Report</h1>",
         "<div class='section'><h2>Executive summary</h2><p>This report benchmarks forecasting and agentic DRL control for slice-aware RAN scheduling/resource actions across eMBB, MTC, and URLLC.</p></div>",
         f"<p><strong>Best scenario by composite:</strong> {best} | <strong>Average composite:</strong> {score_mean:.4f}</p>",
+        (
+            "<p><strong>Global comparison fairness:</strong> FAIR (identical test hashes).</p>"
+            if hash_ok
+            else "<p><strong>Global comparison fairness:</strong> NOT FAIR (test hashes differ), global ranking disabled.</p>"
+        ),
         "<div class='section'><h2>Model family comparison</h2>",
-        _to_html_table(model_family_comparison),
+        _to_html_table(model_family_comparison) if hash_ok else "<p>Not available because comparison is NOT FAIR.</p>",
         "</div>",
         "<div class='section'><h2>Scenario-level detailed comparison</h2>",
         _to_html_table(df[["scenario", "status", "model_type", "sequence_length", *METRIC_COLS, *PEAK_METRIC_COLS]]),
@@ -256,7 +268,7 @@ def aggregate(results_root: Path = Path("results")) -> Path:
         "</div>",
         "<div class='section'><h2>Ablation table</h2>",
         _to_html_table(
-            leaderboard[leaderboard["scenario"].isin(["lightweight-32", "with_time_features", "with_time_and_traffic_features", "residual-mlp-128", "agentic_residual_mlp", "agentic_liquid_residual"])][
+            success_df[success_df["scenario"].isin(["lightweight-32", "with_time_features", "with_time_and_traffic_features", "residual-mlp-128", "agentic_residual_mlp", "agentic_liquid_residual"])][
                 ["scenario", "model_type", "r2", "rmse", "mae", "wmape", "action_accuracy", "action_macro_f1", "composite_score"]
             ]
         ),

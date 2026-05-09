@@ -5,12 +5,17 @@ import pandas as pd
 
 
 def _make_sequences(x: np.ndarray, y: np.ndarray, sequence_length: int) -> tuple[np.ndarray, np.ndarray]:
+    x = np.asarray(x, dtype=np.float32)
+    y = np.asarray(y, dtype=np.float32)
     if sequence_length <= 1:
-        return x, y
-    if len(x) <= sequence_length:
-        return np.empty((0, sequence_length, x.shape[1]), dtype=np.float32), np.empty((0,), dtype=np.float32)
-    windows = np.lib.stride_tricks.sliding_window_view(x, window_shape=sequence_length, axis=0)[:-1]
-    return np.ascontiguousarray(windows, dtype=np.float32), np.ascontiguousarray(y[sequence_length:], dtype=np.float32)
+        return np.ascontiguousarray(x), np.ascontiguousarray(y)
+    n, f = x.shape
+    if n <= sequence_length:
+        return np.empty((0, sequence_length, f), dtype=np.float32), np.empty((0,), dtype=np.float32)
+    windows = [x[i : i + sequence_length] for i in range(n - sequence_length)]
+    x_seq = np.stack(windows, axis=0)
+    y_seq = y[sequence_length:]
+    return np.ascontiguousarray(x_seq), np.ascontiguousarray(y_seq)
 
 
 def build_features(df: pd.DataFrame, sequence_length: int) -> tuple[np.ndarray, np.ndarray, dict]:
