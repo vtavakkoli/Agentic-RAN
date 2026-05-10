@@ -21,7 +21,10 @@ def _assert_prediction_alignment(results_root: Path) -> None:
         df = pd.read_csv(pred)
         if "global_index" not in df.columns:
             raise AssertionError(f"Missing global_index in {pred}")
-        hashes.add(tuple(df["global_index"].tolist()))
+        # Compare the effective sample universe, not row order.
+        # Different scenarios may emit predictions in a different ordering,
+        # while still evaluating on the exact same test split.
+        hashes.add(tuple(sorted(df["global_index"].tolist())))
     if len(hashes) > 1:
         raise AssertionError("Successful scenarios do not share identical effective test_global_index values.")
 
