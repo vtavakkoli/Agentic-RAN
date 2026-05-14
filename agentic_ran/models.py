@@ -126,16 +126,27 @@ class KANRegressor(nn.Module):
 
 
 class AgenticPatchKANMixer(nn.Module):
-    def __init__(self, input_dim: int, hidden_size: int, num_layers: int, dropout: float):
+    def __init__(self, input_dim: int, hidden_size: int, num_layers: int, dropout: float, num_actions: int = 10):
         super().__init__()
         self.patch = PatchTSTRegressor(input_dim, hidden_size, max(1, num_layers // 2), dropout)
         self.kan = KANRegressor(input_dim, hidden_size, max(1, num_layers // 2), dropout)
-        self.mix = nn.Sequential(nn.Linear(2, hidden_size), nn.GELU(), nn.Linear(hidden_size, 1))
+        self.encoder = nn.Sequential(
+            nn.Linear(2, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.reg_head = nn.Linear(hidden_size, 1)
+        self.action_head = nn.Linear(hidden_size, num_actions)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor):
         p = self.patch(x)
         k = self.kan(x)
-        return self.mix(torch.stack([p, k], dim=-1)).squeeze(-1)
+        h = self.encoder(torch.stack([p, k], dim=-1))
+        pred = self.reg_head(h).squeeze(-1)
+        logits = self.action_head(h)
+        conf = torch.softmax(logits, dim=-1).max(dim=-1).values
+        return pred, logits, conf
 
 class XLSTMRegressor(nn.Module):
     def __init__(self, input_dim: int, hidden_size: int, num_layers: int, dropout: float):

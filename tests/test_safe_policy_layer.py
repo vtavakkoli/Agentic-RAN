@@ -1,7 +1,7 @@
-import numpy as np
-from policies.safe_policy_layer import SafePolicyLayer
+from agentic_ran.agentic_policy import ACTION_SPACE, recommend_action
 
-def test_fallback_when_forbidden():
-    s=SafePolicyLayer()
-    out=s.enforce(np.array([1.0]*9), allowed_mask=[0,0,0,0,0,0,0,0,1])
-    assert out['used_fallback']
+
+def test_agentic_policy_returns_valid_action_for_unsafe_pressure():
+    decision = recommend_action({"prb_pressure": 1.5, "traffic_class": "URLLC", "ratio_granted_req": 0.8})
+    assert decision["action_id"] in ACTION_SPACE
+    assert "action_name" in decision

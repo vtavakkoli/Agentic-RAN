@@ -8,7 +8,7 @@ from scripts.test import main as test
 def main() -> None:
     print("[run-all] Step 1/3: generate_data")
     generate_data()
-    print("[run-all] Step 2/3: train all configured agent/supervised models")
+    print("[run-all] Step 2/3: train all configured agentic action models")
     train()
     print("[run-all] Step 3/3: test all trained models and build report")
     test()

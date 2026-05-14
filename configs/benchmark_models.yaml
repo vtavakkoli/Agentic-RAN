@@ -1,31 +1,18 @@
 main_models:
-  - mlp_lightweight_32
-  - mlp_balanced_small
-  - mlp_with_time_features
-  - residual_mlp_128
-  - kan_baseline
-  - gradient_boosting_baseline
   - agentic_residual_mlp
-  - graph_actor_critic_ran
-  - masked_graph_ppo_ran
-  - safegraphagent_ran
-
-appendix_models:
-  - attention_baseline
-  - liquid_baseline
-  - xlstm_baseline
-  - residual_tcn_16
-  - residual_tcn_32
-  - residual_liquid_tcn_16
-  - residual_liquid_tcn_32
-  - patchtst_baseline
-  - tsmixer_baseline
   - agentic_liquid_residual
   - agentic_sequence_attention
   - agentic_patch_kan_mixer
 
-optional_foundation_models:
-  - chronos_bolt
-  - timesfm
-  - tiny_time_mixer
-  - moirai
+removed_from_main_study:
+  reason: "Forecast-only models do not produce learned action predictions, so action_accuracy/action_macro_f1 are NaN and they are outside this study."
+  examples:
+    - mlp_lightweight_32
+    - mlp_balanced_small
+    - residual_mlp_128
+    - attention_baseline
+    - liquid_baseline
+    - xlstm_baseline
+    - patchtst_baseline
+    - tsmixer_baseline
+    - kan_baseline

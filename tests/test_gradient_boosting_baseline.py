@@ -1,8 +1,5 @@
-import numpy as np
-from models.gradient_boosting import GradientBoostingBaseline
+from agentic_ran.scenarios import SCENARIOS
 
-def test_fit_predict():
-    X=np.random.randn(20,4); y=np.random.randn(20)
-    m=GradientBoostingBaseline().fit(X,y)
-    p=m.predict(X[:3])
-    assert len(p)==3
+
+def test_gradient_boosting_removed_from_action_study():
+    assert all("gradient" not in cfg.model_type for cfg in SCENARIOS.values())

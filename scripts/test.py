@@ -10,9 +10,13 @@ from scripts.aggregate_report import aggregate
 
 def _assert_prediction_alignment(results_root: Path) -> None:
     hashes = set()
-    skip_names = {"train", "test", "generate_data", "figures", "tables", "policies"}
-    for scenario_dir in sorted(results_root.iterdir()):
-        if not scenario_dir.is_dir() or scenario_dir.name in skip_names:
+    artifacts_root = results_root / "train" / "artifacts"
+    candidate_dirs = sorted(artifacts_root.iterdir()) if artifacts_root.exists() else []
+    if not candidate_dirs:
+        skip_names = {"train", "test", "generate_data", "figures", "tables", "policies"}
+        candidate_dirs = [p for p in sorted(results_root.iterdir()) if p.is_dir() and p.name not in skip_names]
+    for scenario_dir in candidate_dirs:
+        if not scenario_dir.is_dir():
             continue
         status = scenario_dir / "status.json"
         pred = scenario_dir / "predictions.csv"
