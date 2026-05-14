@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 import pandas as pd
 
@@ -9,8 +10,9 @@ from scripts.aggregate_report import aggregate
 
 def _assert_prediction_alignment(results_root: Path) -> None:
     hashes = set()
+    skip_names = {"train", "test", "generate_data", "figures", "tables", "policies"}
     for scenario_dir in sorted(results_root.iterdir()):
-        if not scenario_dir.is_dir():
+        if not scenario_dir.is_dir() or scenario_dir.name in skip_names:
             continue
         status = scenario_dir / "status.json"
         pred = scenario_dir / "predictions.csv"
@@ -21,13 +23,8 @@ def _assert_prediction_alignment(results_root: Path) -> None:
         df = pd.read_csv(pred)
         if "global_index" not in df.columns:
             raise AssertionError(f"Missing global_index in {pred}")
-        # Compare the effective sample universe, not row order.
-        # Different scenarios may emit predictions in a different ordering,
-        # while still evaluating on the exact same test split.
         hashes.add(tuple(sorted(df["global_index"].tolist())))
     if len(hashes) > 1:
-        # Do not fail the whole pipeline: aggregate_report already marks the run
-        # as NOT FAIR and disables global ranking when test hashes differ.
         print(
             "[test] warning: successful scenarios do not share identical "
             "effective test_global_index values; global ranking fairness is disabled."
@@ -35,17 +32,17 @@ def _assert_prediction_alignment(results_root: Path) -> None:
 
 
 def main() -> None:
-    aggregate(Path("results"))
+    report_path = aggregate(Path("results"))
     _assert_prediction_alignment(Path("results"))
 
     test_dir = Path("results/test")
     test_dir.mkdir(parents=True, exist_ok=True)
-
-    src = Path("results/report.html")
-    content = src.read_text(encoding="utf-8") if src.exists() else "<html><body><h1>Test Report</h1><p>No report generated.</p></body></html>"
-    wrapped = f"<html><body><h1>Comprehensive Test Report</h1>{content}</body></html>"
-    (test_dir / "test.html").write_text(wrapped, encoding="utf-8")
-    print("[test] report saved to results/test/test.html")
+    target = test_dir / "report.html"
+    if report_path.exists():
+        shutil.copy2(report_path, target)
+    else:
+        target.write_text("<html><body><h1>Test Report</h1><p>No report generated.</p></body></html>", encoding="utf-8")
+    print("[test] report saved to results/test/report.html")
 
 
 if __name__ == "__main__":

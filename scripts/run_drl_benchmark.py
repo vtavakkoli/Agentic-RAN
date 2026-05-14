@@ -73,11 +73,17 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path, episodes: int
                 "source_file": row.get("source_file", "unknown"),
                 "y_true": float(row.get("tx_brate downlink [Mbps]", 0.0)),
                 "y_pred": float(row.get("tx_brate downlink [Mbps]", 0.0)),
-                "scenario": "PPO_only",
+                "scenario": "drl_policy",
                 "model_type": "drl",
+                "slice_id": int(row.get("slice_id", sid)),
+                "policy_name": info.get("action_name", "keep_current"),
                 "action": int(action),
                 "action_name": info.get("action_name", "keep_current"),
                 "reward": float(reward),
+                "ratio_granted_req": float(row.get("ratio_granted_req", 0.0)),
+                "slice_prb": float(row.get("slice_prb", 0.0)),
+                "tx_errors_downlink_pct": float(row.get("tx_errors downlink (%)", 0.0)),
+                "rx_errors_uplink_pct": float(row.get("rx_errors uplink (%)", 0.0)),
             }
         )
         obs = next_obs
@@ -104,7 +110,20 @@ def run_one_seed(dataset: pd.DataFrame, seed: int, out_root: Path, episodes: int
 
     seed_dir = out_root / f"seed_{seed}"
     seed_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(records).to_csv(seed_dir / "predictions.csv", index=False)
+    records_df = pd.DataFrame(records)
+    records_df.to_csv(seed_dir / "predictions.csv", index=False)
+
+    slice_kpis = (
+        records_df.groupby("slice_id", as_index=False)
+        .agg(
+            mean_reward=("reward", "mean"),
+            mean_grant_ratio=("ratio_granted_req", "mean"),
+            mean_slice_prb=("slice_prb", "mean"),
+            mean_downlink_error_pct=("tx_errors_downlink_pct", "mean"),
+            action_switch_rate=("action", lambda x: float(np.mean(np.diff(x.to_numpy()) != 0)) if len(x) > 1 else 0.0),
+        )
+    )
+    slice_kpis.to_csv(seed_dir / "slice_policy_kpis.csv", index=False)
     pd.DataFrame({"step": np.arange(len(rewards)), "reward": rewards, "cumulative_reward": np.cumsum(rewards)}).to_csv(
         seed_dir / "reward_curve.csv", index=False
     )
@@ -133,7 +152,19 @@ def main(episodes: int = 100, max_samples: int = 5000) -> None:
     seeds = [42, 43, 44, 45, 46]
     metrics = [run_one_seed(dataset, seed=s, out_root=out_root, episodes=episodes) for s in seeds]
     (Path("results/tables")).mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(metrics).to_csv("results/tables/drl_seed_metrics.csv", index=False)
+    metrics_df = pd.DataFrame(metrics)
+    metrics_df.to_csv("results/tables/drl_seed_metrics.csv", index=False)
+
+    kpi_frames = []
+    for seed_dir in sorted(out_root.glob("seed_*")):
+        kpi_file = seed_dir / "slice_policy_kpis.csv"
+        if kpi_file.exists():
+            part = pd.read_csv(kpi_file)
+            part["seed"] = int(seed_dir.name.split("_")[-1])
+            kpi_frames.append(part)
+    if kpi_frames:
+        pd.concat(kpi_frames, ignore_index=True).to_csv("results/tables/drl_slice_policy_kpis.csv", index=False)
+
     Path("results/policies/drl_summary.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
 

@@ -21,6 +21,7 @@ services:
     <<: *common
     command: python -m scripts.test
 
+
   run-all:
     <<: *common
     command: python -m scripts.run_all
