@@ -12,10 +12,5 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Copy only runtime code required by the pipeline.
 COPY agentic_ran /app/agentic_ran
 COPY scripts /app/scripts
-COPY src /app/src
-
-# Runtime writable/mountable paths.
-RUN mkdir -p /app/results /app/shared_data
-VOLUME ["/app/results", "/app/shared_data"]
 
 CMD ["python", "scripts/run_all.py"]
