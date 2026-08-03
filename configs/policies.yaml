@@ -1,0 +1,96 @@
+version: 1
+policies:
+  balanced:
+    description: Maintain balanced scheduler weights and conservative resource margins.
+    action:
+      scheduler: proportional_fair
+      prb_share_delta: 0.0
+      tx_power_db_delta: 0.0
+    impact:
+      latency_factor: 0.97
+      throughput_factor: 1.02
+      loss_factor: 0.96
+      energy_factor: 1.0
+      handover_factor: 0.98
+      sinr_delta: 0.0
+  latency_guard:
+    description: Prioritize low-latency traffic and reserve radio resources for urgent flows.
+    action:
+      scheduler: deadline_aware
+      prb_share_delta: 0.12
+      tx_power_db_delta: 0.5
+    impact:
+      latency_factor: 0.56
+      throughput_factor: 0.98
+      loss_factor: 0.66
+      energy_factor: 1.08
+      handover_factor: 0.88
+      sinr_delta: 0.8
+  throughput_boost:
+    description: Increase eMBB throughput using aggressive proportional-fair scheduling.
+    action:
+      scheduler: throughput_aware
+      prb_share_delta: 0.10
+      tx_power_db_delta: 0.8
+    impact:
+      latency_factor: 0.94
+      throughput_factor: 1.24
+      loss_factor: 0.93
+      energy_factor: 1.12
+      handover_factor: 0.98
+      sinr_delta: 1.0
+  congestion_relief:
+    description: Rebalance load and cap bursty traffic when PRB pressure is critical.
+    action:
+      scheduler: load_aware
+      prb_share_delta: -0.14
+      traffic_shaping: adaptive
+      tx_power_db_delta: 0.0
+    impact:
+      latency_factor: 0.72
+      throughput_factor: 0.92
+      loss_factor: 0.58
+      energy_factor: 0.96
+      handover_factor: 0.90
+      sinr_delta: 0.2
+  energy_saver:
+    description: Reduce radio energy consumption during low-load periods.
+    action:
+      scheduler: energy_aware
+      prb_share_delta: -0.08
+      tx_power_db_delta: -2.0
+      sleep_mode: micro
+    impact:
+      latency_factor: 1.14
+      throughput_factor: 0.90
+      loss_factor: 1.08
+      energy_factor: 0.72
+      handover_factor: 1.02
+      sinr_delta: -1.5
+  coverage_recovery:
+    description: Recover weak-radio users through coverage-aware scheduling and power adjustment.
+    action:
+      scheduler: coverage_aware
+      prb_share_delta: 0.06
+      tx_power_db_delta: 2.0
+    impact:
+      latency_factor: 0.86
+      throughput_factor: 1.10
+      loss_factor: 0.74
+      energy_factor: 1.16
+      handover_factor: 0.78
+      sinr_delta: 3.0
+  massive_iot_access:
+    description: Stabilize access for dense mMTC populations using grant-efficient scheduling.
+    action:
+      scheduler: grant_efficient
+      prb_share_delta: 0.04
+      access_backoff: adaptive
+      tx_power_db_delta: 0.2
+    impact:
+      latency_factor: 0.84
+      throughput_factor: 1.04
+      loss_factor: 0.70
+      energy_factor: 0.94
+      handover_factor: 0.94
+      sinr_delta: 0.3
