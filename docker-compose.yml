@@ -1,27 +1,86 @@
-x-common: &common
-  build: .
-  image: agentic-ran:latest
-  volumes:
-    - ./:/app
-  working_dir: /app
+name: agentic-ran
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: agentic-ran:local
   environment:
-    EPOCHS: ${EPOCHS:-5}
-    PYTHONPATH: /app
+    AGENTIC_RAN_DATASET: /workspace/data/runtime/ran_policy_sample.csv
+    AGENTIC_RAN_MODEL: /workspace/artifacts/policy_selector.joblib
+    AGENTIC_RAN_POLICIES: /workspace/configs/policies.yaml
+    AGENTIC_RAN_RESULTS: /workspace/results
+    AGENTIC_RAN_AUTO_BOOTSTRAP: "0"
+    AGENTIC_RAN_DATASET_SHA256: ${AGENTIC_RAN_DATASET_SHA256:-}
+  volumes:
+    - ran-data:/workspace/data/runtime
+    - ran-model:/workspace/artifacts
+    - ran-results:/workspace/results
 
 services:
-  generate_data:
-    <<: *common
-    command: python -m scripts.generate_data
+  dataset:
+    <<: *app
+    command:
+      - download-data
+      - --url
+      - ${AGENTIC_RAN_DATASET_URL:-https://raw.githubusercontent.com/vtavakkoli/Agentic-RAN/main/data/bootstrap/ran_policy_sample.csv}
+      - --output
+      - /workspace/data/runtime/ran_policy_sample.csv
+      - --fallback-rows
+      - "140"
+    restart: "no"
 
-  train:
-    <<: *common
-    command: python -m scripts.train
+  trainer:
+    <<: *app
+    depends_on:
+      dataset:
+        condition: service_completed_successfully
+    command:
+      - train
+      - --data
+      - /workspace/data/runtime/ran_policy_sample.csv
+      - --model
+      - /workspace/artifacts/policy_selector.joblib
+      - --metrics
+      - /workspace/results/training_metrics.json
+    restart: "no"
+
+  api:
+    <<: *app
+    depends_on:
+      trainer:
+        condition: service_completed_successfully
+    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "${AGENTIC_RAN_PORT:-8080}:8080"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   test:
-    <<: *common
-    command: python -m scripts.test
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    profiles: ["test"]
+    depends_on:
+      trainer:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        python -m pytest -q &&
+        agentic-ran benchmark --data /workspace/data/runtime/ran_policy_sample.csv
+        --output /workspace/results --limit 400
+    restart: "no"
 
-
-  run-all:
-    <<: *common
-    command: python -m scripts.run_all
+volumes:
+  ran-data:
+  ran-model:
+  ran-results:

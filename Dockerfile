@@ -1,16 +1,46 @@
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1.7
+FROM python:3.12-slim AS builder
 
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+WORKDIR /build
+COPY pyproject.toml README.md LICENSE ./
+COPY agentic_ran ./agentic_ran
+RUN python -m pip install --upgrade pip build \
+    && python -m build --wheel --outdir /dist
+
+FROM python:3.12-slim AS runtime
+
+ARG APP_UID=10001
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    AGENTIC_RAN_DATASET=/workspace/data/runtime/ran_policy_sample.csv \
+    AGENTIC_RAN_MODEL=/workspace/artifacts/policy_selector.joblib \
+    AGENTIC_RAN_POLICIES=/workspace/configs/policies.yaml \
+    AGENTIC_RAN_RESULTS=/workspace/results
 
-WORKDIR /app
+RUN groupadd --gid ${APP_UID} agentic \
+    && useradd --uid ${APP_UID} --gid agentic --create-home --shell /usr/sbin/nologin agentic
+WORKDIR /workspace
+COPY --from=builder /dist/*.whl /tmp/
+RUN python -m pip install /tmp/*.whl && rm -f /tmp/*.whl
+COPY configs ./configs
+COPY data/bootstrap ./data/bootstrap
+RUN mkdir -p data/runtime artifacts results \
+    && chown -R agentic:agentic /workspace
+USER agentic
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+EXPOSE 8080
+HEALTHCHECK --interval=20s --timeout=3s --start-period=15s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)" || exit 1
 
-# Copy only runtime code required by the pipeline.
-COPY agentic_ran /app/agentic_ran
-COPY scripts /app/scripts
+ENTRYPOINT ["agentic-ran"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8080"]
 
-CMD ["python", "scripts/run_all.py"]
+FROM runtime AS test
+USER root
+RUN python -m pip install "pytest>=8.3,<10" "httpx>=0.27,<1"
+COPY tests ./tests
+USER agentic
