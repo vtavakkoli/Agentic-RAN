@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
@@ -9,7 +9,7 @@ COPY agentic_ran ./agentic_ran
 RUN python -m pip install --upgrade pip build \
     && python -m build --wheel --outdir /dist
 
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 ARG APP_UID=10001
 ENV PYTHONDONTWRITEBYTECODE=1 \
