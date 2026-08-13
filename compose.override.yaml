@@ -1,0 +1,4 @@
+services:
+  test:
+    entrypoint: ["python"]
+    command: ["-m", "pytest", "-q"]
