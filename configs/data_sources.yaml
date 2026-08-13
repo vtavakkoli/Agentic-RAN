@@ -1,0 +1,35 @@
+version: 1
+
+# Public measurement datasets used by `agentic-ran prepare-real-data`.
+# Raw files are downloaded at runtime and are not redistributed by this repository.
+# Prepared CSV.GZ outputs preserve source identifiers and measured/derived feature metadata.
+sources:
+  - id: telenor-forest-private-5g
+    enabled: true
+    title: Radio and Network KPI measurements for 5G Private Network in Forest Environment
+    publisher: Telenor Norway / COMMECT
+    doi: 10.5281/zenodo.16919567
+    record_url: https://zenodo.org/records/16919567
+    download_url: https://zenodo.org/records/16919567/files/data_forestry.xlsx?download=1
+    filename: data_forestry.xlsx
+    format: xlsx
+    md5: e3b36c7df1ac82e6034feda882e33ad0
+    license: source-record
+    notes: >-
+      Field-trial measurements from a portable 5G private network. Useful measured
+      fields include RSRP, downlink/uplink throughput, latency and jitter.
+
+  - id: glasgow-5g-2025
+    enabled: true
+    title: Glasgow 5G Dataset 2025
+    publisher: University of the West of Scotland
+    doi: 10.5281/zenodo.20465872
+    record_url: https://zenodo.org/records/20465872
+    download_url: https://zenodo.org/records/20465872/files/Glasgow5GDataSet.xlsx?download=1
+    filename: Glasgow5GDataSet.xlsx
+    format: xlsx
+    md5: 375c58bd79d1e0762724fb78f67b4230
+    license: CC-BY-4.0
+    notes: >-
+      Real-world 5G speed-test measurements across Glasgow. Measured fields include
+      signal strength, download/upload throughput and ping latency.
