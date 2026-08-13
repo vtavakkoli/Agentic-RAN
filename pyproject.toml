@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-ran"
-version = "2.0.0"
-description = "Safety-governed agentic O-RAN intelligence with world-model planning, uncertainty gates, xApp/rApp adapters, and reproducible benchmarks"
+version = "2.1.0"
+description = "Safety-governed agentic O-RAN intelligence with real-data benchmarking, world-model planning, uncertainty gates, and reproducible deployment reports"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -23,6 +23,7 @@ dependencies = [
   "fastapi>=0.115,<1",
   "joblib>=1.4,<2",
   "numpy>=2.0,<3",
+  "openpyxl>=3.1,<4",
   "pandas>=2.2,<3",
   "pydantic>=2.9,<3",
   "PyYAML>=6.0,<7",
@@ -63,16 +64,14 @@ source = ["agentic_ran"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-# v2 introduces transport/hardware integration boundaries that are not safely
-# exercised as live RAN infrastructure in GitHub Actions. Keep the CI threshold
-# just below the measured v2 baseline (58.74%) and ratchet it upward as adapter
-# integration tests are added, rather than fabricating protocol coverage.
+# Transport/hardware integration boundaries are not exercised as live RAN infrastructure in GitHub Actions.
+# Keep a realistic floor and ratchet it upward as deterministic adapter tests are added.
 fail_under = 58
 
 [tool.ruff]
 target-version = "py311"
 line-length = 120
-extend-exclude = ["data/runtime", "artifacts", "results"]
+extend-exclude = ["data/runtime", "data/raw", "data/prepared", "artifacts", "results"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
