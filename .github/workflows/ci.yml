@@ -82,11 +82,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Run real-data benchmark workflow
+      - name: Prepare host directories
+        run: mkdir -p data/raw data/prepared results artifacts
+      - name: Prepare real data
         run: |
-          mkdir -p data/raw data/prepared results
-          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
-            docker compose --profile test up --build --abort-on-container-exit --exit-code-from test test
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose run --rm --no-deps prepare-data
+      - name: Select production candidate model
+        run: |
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose run --rm --no-deps model-selection
+      - name: Generate readiness report
+        run: |
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose run --rm --no-deps report
+      - name: Run test suite in Compose image
+        run: |
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose --profile test run --rm --no-deps test
       - name: Verify generated evidence
         run: |
           test -s data/prepared/real_measurements.csv.gz
