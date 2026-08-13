@@ -33,3 +33,24 @@ sources:
     notes: >-
       Real-world 5G speed-test measurements across Glasgow. Measured fields include
       signal strength, download/upload throughput and ping latency.
+
+  # Research-grade extended source. Disabled from the default smoke workflow because
+  # the current archive is ~786 MB and contains multiple CSV/Parquet sub-datasets.
+  # It is catalogued here for future dedicated Vienna/digital-twin adapters.
+  - id: vienna-4g-5g-drive-test-v3
+    enabled: false
+    title: The Vienna 4G/5G Drive-Test Dataset
+    publisher: TU Wien / CD LAB AIRAN
+    doi: 10.5281/zenodo.18338399
+    concept_doi: 10.5281/zenodo.18322065
+    record_url: https://zenodo.org/records/18338399
+    download_url: https://zenodo.org/records/18338399/files/Vienna-full-4G-5G-dataset-v1.0.3.zip?download=1
+    filename: Vienna-full-4G-5G-dataset-v1.0.3.zip
+    format: zip
+    md5: cc956eff3c633c03abc5b9a126f73911
+    license: CC-BY-4.0
+    profile: extended
+    notes: >-
+      Large-scale Vienna scanner and handset measurements with RSRP/RSRQ/SINR,
+      throughput, mobility metadata, inferred cell descriptors and optional city model.
+      Intentionally excluded from the small default Docker smoke benchmark.
