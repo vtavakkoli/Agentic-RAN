@@ -1,4 +1,11 @@
 services:
+  prepare-data:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+  model-selection:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+  report:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
   test:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     entrypoint: ["python"]
     command: ["-m", "pytest", "-q"]
