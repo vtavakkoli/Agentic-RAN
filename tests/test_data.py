@@ -6,6 +6,8 @@ import pandas as pd
 
 from agentic_ran.config import FEATURES, TARGET_COLUMN
 from agentic_ran.data import POLICY_LABELS, download_dataset, generate_dataset, sha256_file, validate_dataset, write_dataset
+from agentic_ran.data_adapters import normalize_table
+from agentic_ran.real_features import build_model_ready
 
 
 def test_generation_is_deterministic() -> None:
@@ -58,3 +60,21 @@ def test_checksum_mismatch_never_falls_back_silently(tmp_path: Path) -> None:
         pass
     else:  # pragma: no cover - assertion branch
         raise AssertionError("checksum mismatch must raise DatasetIntegrityError")
+
+
+def test_real_measurement_adapter_preserves_measured_fields() -> None:
+    raw = pd.DataFrame(
+        {
+            "Signal (dBm)": [-82, -101, -94],
+            "Download (Mbps)": [420.0, 55.0, 170.0],
+            "Upload (Mbps)": [80.0, 12.0, 35.0],
+            "Ping (ms)": [18.0, 72.0, 34.0],
+            "Location": ["A", "B", "C"],
+        }
+    )
+    normalized = normalize_table(raw, "fixture", "measurements")
+    ready = build_model_ready(normalized)
+    validate_dataset(ready)
+    assert normalized["rsrp_dbm"].tolist() == [-82, -101, -94]
+    assert ready["observed_model_features"].min() >= 4
+    assert ready["realism_score"].between(0, 1).all()
