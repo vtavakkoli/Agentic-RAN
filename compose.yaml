@@ -1,0 +1,72 @@
+name: agentic-ran
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: agentic-ran:local
+  environment:
+    AGENTIC_RAN_DATASET: /workspace/data/bootstrap/ran_policy_sample.csv
+    AGENTIC_RAN_MODEL: /workspace/artifacts/policy_selector.joblib
+    AGENTIC_RAN_POLICIES: /workspace/configs/policies.yaml
+    AGENTIC_RAN_RESULTS: /workspace/results
+    AGENTIC_RAN_AUTO_BOOTSTRAP: "0"
+  volumes:
+    - ./data:/workspace/data
+    - ./results:/workspace/results
+    - ran-model:/workspace/artifacts
+
+services:
+  prepare-data:
+    <<: *app
+    command: ["prepare-real-data", "--catalog", "/workspace/configs/data_sources.yaml", "--raw-dir", "/workspace/data/raw", "--output", "/workspace/data/prepared"]
+    restart: "no"
+
+  model-selection:
+    <<: *app
+    depends_on:
+      prepare-data:
+        condition: service_completed_successfully
+    command: ["select-model", "--synthetic", "/workspace/data/bootstrap/ran_policy_sample.csv", "--real", "/workspace/data/prepared/real_policy_eval.csv.gz", "--model", "/workspace/artifacts/policy_selector.joblib", "--metrics", "/workspace/results/model_selection.json"]
+    restart: "no"
+
+  report:
+    <<: *app
+    depends_on:
+      model-selection:
+        condition: service_completed_successfully
+    command: ["production-report", "--synthetic", "/workspace/data/bootstrap/ran_policy_sample.csv", "--real", "/workspace/data/prepared/real_policy_eval.csv.gz", "--selection", "/workspace/results/model_selection.json", "--provenance", "/workspace/data/prepared/provenance.json", "--output", "/workspace/results/report.html"]
+    restart: "no"
+
+  api:
+    <<: *app
+    depends_on:
+      model-selection:
+        condition: service_completed_successfully
+    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "${AGENTIC_RAN_PORT:-8080}:8080"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  test:
+    <<: *app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    profiles: ["test"]
+    depends_on:
+      report:
+        condition: service_completed_successfully
+    command: ["python", "-m", "pytest", "-q"]
+    restart: "no"
+
+volumes:
+  ran-model:

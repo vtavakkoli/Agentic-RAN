@@ -1,0 +1,20 @@
+services:
+  prepare-data:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+  model-selection:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    volumes:
+      - ./artifacts:/workspace/artifacts
+  report:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    volumes:
+      - ./artifacts:/workspace/artifacts
+  api:
+    volumes:
+      - ./artifacts:/workspace/artifacts
+  test:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    volumes:
+      - ./artifacts:/workspace/artifacts
+    entrypoint: ["python"]
+    command: ["-m", "pytest", "-q"]

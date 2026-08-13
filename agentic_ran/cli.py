@@ -1,4 +1,4 @@
-"""Command-line interface for training, decisions, control loops, audit, and resilience benchmarks."""
+"""Command-line interface for data, training, governed control, and deployment benchmarks."""
 
 from __future__ import annotations
 
@@ -15,6 +15,9 @@ from agentic_ran.config import Settings
 from agentic_ran.data import download_dataset, generate_dataset, load_dataset, sha256_file, write_dataset
 from agentic_ran.domain import ExecutionMode, NetworkObservation
 from agentic_ran.model import train_policy_proposer, write_training_metrics
+from agentic_ran.model_selection import select_production_model
+from agentic_ran.production_report import generate_production_report
+from agentic_ran.real_data import prepare_real_data
 from agentic_ran.reporting import benchmark
 from agentic_ran.scenarios import ResilienceBenchmark
 from agentic_ran.service import PolicyService
@@ -33,18 +36,39 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--rows", type=int, default=1_200)
     generate.add_argument("--seed", type=int, default=42)
 
-    download = subparsers.add_parser("download-data", help="Download the small dataset with an offline fallback")
+    download = subparsers.add_parser("download-data", help="Download the small bootstrap dataset with an offline fallback")
     download.add_argument("--url", default=os.getenv("AGENTIC_RAN_DATASET_URL", DEFAULT_DATASET_URL))
     download.add_argument("--output", default=os.getenv("AGENTIC_RAN_DATASET", "data/runtime/ran_policy_sample.csv"))
     download.add_argument("--sha256", default=os.getenv("AGENTIC_RAN_DATASET_SHA256"))
     download.add_argument("--no-fallback", action="store_true")
     download.add_argument("--fallback-rows", type=int, default=140)
 
-    train = subparsers.add_parser("train", help="Train the lightweight policy proposer")
+    real = subparsers.add_parser("prepare-real-data", help="Download and normalize public real-world 5G KPI datasets")
+    real.add_argument("--catalog", default="configs/data_sources.yaml")
+    real.add_argument("--raw-dir", default="data/raw")
+    real.add_argument("--output", default="data/prepared")
+    real.add_argument("--max-rows-per-source", type=int, default=20_000)
+
+    train = subparsers.add_parser("train", help="Train the default lightweight policy proposer")
     train.add_argument("--data", default=os.getenv("AGENTIC_RAN_DATASET", "data/runtime/ran_policy_sample.csv"))
     train.add_argument("--model", default=os.getenv("AGENTIC_RAN_MODEL", "artifacts/policy_selector.joblib"))
     train.add_argument("--metrics", default="results/training_metrics.json")
     train.add_argument("--seed", type=int, default=42)
+
+    select = subparsers.add_parser("select-model", help="Compare candidate proposers and train the production-candidate winner")
+    select.add_argument("--synthetic", default="data/bootstrap/ran_policy_sample.csv")
+    select.add_argument("--real", default="data/prepared/real_policy_eval.csv.gz")
+    select.add_argument("--model", default=os.getenv("AGENTIC_RAN_MODEL", "artifacts/policy_selector.joblib"))
+    select.add_argument("--metrics", default="results/model_selection.json")
+    select.add_argument("--seed", type=int, default=42)
+
+    report = subparsers.add_parser("production-report", help="Generate results/report.html with real-data readiness evidence")
+    report.add_argument("--synthetic", default="data/bootstrap/ran_policy_sample.csv")
+    report.add_argument("--real", default="data/prepared/real_policy_eval.csv.gz")
+    report.add_argument("--selection", default="results/model_selection.json")
+    report.add_argument("--provenance", default="data/prepared/provenance.json")
+    report.add_argument("--output", default="results/report.html")
+    report.add_argument("--limit", type=int, default=1000)
 
     decide = subparsers.add_parser("decide", help="Select a governed policy for one JSON KPI snapshot")
     source = decide.add_mutually_exclusive_group(required=True)
@@ -100,7 +124,9 @@ async def _shadow(url: str, steps: int, intent: str):
     output = []
     for _ in range(steps):
         result = await loop.step(intent=intent)
-        output.append({"cell": result.observation.cell_id, "policy": result.decision.selected_policy, "confidence": result.decision.confidence})
+        output.append(
+            {"cell": result.observation.cell_id, "policy": result.decision.selected_policy, "confidence": result.decision.confidence}
+        )
     return output
 
 
@@ -111,8 +137,18 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"dataset": str(path), "sha256": sha256_file(path)}, indent=2))
         return 0
     if args.command == "download-data":
-        path, source = download_dataset(args.url, args.output, expected_sha256=args.sha256, allow_fallback=not args.no_fallback, fallback_rows=args.fallback_rows)
+        path, source = download_dataset(
+            args.url,
+            args.output,
+            expected_sha256=args.sha256,
+            allow_fallback=not args.no_fallback,
+            fallback_rows=args.fallback_rows,
+        )
         print(json.dumps({"dataset": str(path), "source": source, "sha256": sha256_file(path)}, indent=2))
+        return 0
+    if args.command == "prepare-real-data":
+        manifest = prepare_real_data(args.catalog, args.raw_dir, args.output, args.max_rows_per_source)
+        print(json.dumps(manifest, indent=2))
         return 0
     if args.command == "train":
         frame = load_dataset(args.data)
@@ -121,6 +157,22 @@ def main(argv: list[str] | None = None) -> int:
         write_training_metrics(metrics, args.metrics)
         summary = {key: value for key, value in metrics.items() if key != "classification_report"}
         print(json.dumps({"model": args.model, **summary}, indent=2))
+        return 0
+    if args.command == "select-model":
+        metrics = select_production_model(args.synthetic, args.real, args.model, args.metrics, seed=args.seed)
+        print(json.dumps(metrics, indent=2))
+        return 0
+    if args.command == "production-report":
+        summary = generate_production_report(
+            PolicyService.load(),
+            args.synthetic,
+            args.real,
+            args.selection,
+            args.provenance,
+            args.output,
+            limit=args.limit,
+        )
+        print(json.dumps({"report": args.output, "verdict": summary["verdict"], "checks": summary["checks"]}, indent=2))
         return 0
     if args.command == "decide":
         decision = PolicyService.load().decide(NetworkObservation(**_payload(args)), intent=args.intent)
