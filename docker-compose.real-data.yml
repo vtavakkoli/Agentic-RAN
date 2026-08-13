@@ -1,3 +1,0 @@
-# Deprecated compatibility marker.
-# Docker Compose prefers compose.yaml, which contains the complete real-data workflow.
-services: {}
