@@ -10,7 +10,7 @@ sources:
     publisher: Telenor Norway / COMMECT
     doi: 10.5281/zenodo.16919567
     record_url: https://zenodo.org/records/16919567
-    download_url: https://zenodo.org/records/16919567/files/data_forestry.xlsx?download=1
+    download_url: https://zenodo.org/api/records/16919567/files/data_forestry.xlsx/content
     filename: data_forestry.xlsx
     format: xlsx
     md5: e3b36c7df1ac82e6034feda882e33ad0
@@ -25,7 +25,7 @@ sources:
     publisher: University of the West of Scotland
     doi: 10.5281/zenodo.20465872
     record_url: https://zenodo.org/records/20465872
-    download_url: https://zenodo.org/records/20465872/files/Glasgow5GDataSet.xlsx?download=1
+    download_url: https://zenodo.org/api/records/20465872/files/Glasgow5GDataSet.xlsx/content
     filename: Glasgow5GDataSet.xlsx
     format: xlsx
     md5: 375c58bd79d1e0762724fb78f67b4230
@@ -44,7 +44,7 @@ sources:
     doi: 10.5281/zenodo.18338399
     concept_doi: 10.5281/zenodo.18322065
     record_url: https://zenodo.org/records/18338399
-    download_url: https://zenodo.org/records/18338399/files/Vienna-full-4G-5G-dataset-v1.0.3.zip?download=1
+    download_url: https://zenodo.org/api/records/18338399/files/Vienna-full-4G-5G-dataset-v1.0.3.zip/content
     filename: Vienna-full-4G-5G-dataset-v1.0.3.zip
     format: zip
     md5: cc956eff3c633c03abc5b9a126f73911
