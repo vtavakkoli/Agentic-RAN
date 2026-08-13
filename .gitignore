@@ -16,6 +16,8 @@ results/*
 !results/.gitkeep
 data/runtime/*
 !data/runtime/.gitkeep
+data/raw/
+data/prepared/
 
 # IDE / OS
 .idea/
