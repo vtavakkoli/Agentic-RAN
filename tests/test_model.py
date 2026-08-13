@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agentic_ran.data import generate_dataset
+from agentic_ran.data import generate_dataset, write_dataset
 from agentic_ran.model import PolicyProposer, train_policy_proposer
+from agentic_ran.model_selection import select_production_model
 
 
 def test_training_produces_all_policy_classes() -> None:
@@ -31,3 +32,18 @@ def test_top_k_is_ordered() -> None:
     values = proposer.top_k(frame.iloc[10].to_dict(), k=4)
     assert len(values) == 4
     assert values == sorted(values, key=lambda item: item[1], reverse=True)
+
+
+def test_production_model_selection_ranks_and_saves_winner(tmp_path: Path) -> None:
+    synthetic = write_dataset(generate_dataset(rows=280, seed=21), tmp_path / "synthetic.csv")
+    real_frame = generate_dataset(rows=180, seed=22)
+    real_path = tmp_path / "real.csv.gz"
+    real_frame.to_csv(real_path, index=False, compression="gzip")
+    model_path = tmp_path / "winner.joblib"
+    metrics_path = tmp_path / "selection.json"
+    metrics = select_production_model(synthetic, real_path, model_path, metrics_path, seed=21)
+    assert len(metrics["candidates"]) == 4
+    assert metrics["selected_model"] in {item["model"] for item in metrics["candidates"]}
+    assert model_path.exists()
+    assert metrics_path.exists()
+    assert PolicyProposer.load(model_path).metadata.version.startswith("realbench-")
