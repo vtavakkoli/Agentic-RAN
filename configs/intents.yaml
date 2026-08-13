@@ -1,0 +1,25 @@
+intents:
+  balanced:
+    risk_tolerance: 0.30
+    weights: {latency: 0.22, loss: 0.20, throughput: 0.28, stability: 0.15, energy: 0.15}
+  urllc-strict:
+    slice_type: URLLC
+    risk_tolerance: 0.15
+    constraints:
+      - {metric: latency_ms, operator: "<=", value: 10.0, hard: true}
+      - {metric: packet_loss_pct, operator: "<=", value: 0.10, hard: true}
+    weights: {latency: 0.43, loss: 0.27, throughput: 0.12, stability: 0.10, energy: 0.08}
+  embb-capacity:
+    slice_type: eMBB
+    risk_tolerance: 0.32
+    weights: {latency: 0.16, loss: 0.12, throughput: 0.45, stability: 0.10, energy: 0.17}
+  mmtc-reliability:
+    slice_type: mMTC
+    risk_tolerance: 0.22
+    weights: {latency: 0.10, loss: 0.31, throughput: 0.12, stability: 0.25, energy: 0.22}
+  green-ran:
+    risk_tolerance: 0.20
+    energy_budget: 0.82
+    constraints:
+      - {metric: energy_load, operator: "<=", value: 0.72, hard: false}
+    weights: {latency: 0.12, loss: 0.15, throughput: 0.18, stability: 0.15, energy: 0.40}

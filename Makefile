@@ -1,40 +1,31 @@
-.PHONY: install format lint typecheck test coverage data train run compose compose-test clean
+.PHONY: install test coverage lint typecheck serve bridge simulate compose-test compose-control
 
 install:
-	python -m pip install -e ".[dev]"
-
-format:
-	ruff format .
-	ruff check --fix .
-
-lint:
-	python -m compileall -q agentic_ran tests
-	ruff check --select E9,F63,F7,F82 .
-
-typecheck:
-	python -m compileall -q agentic_ran tests
+	python -m pip install -e ".[dev,oran]"
 
 test:
 	pytest -q
 
 coverage:
-	pytest --cov=agentic_ran --cov-report=term-missing --cov-report=html
+	pytest --cov=agentic_ran --cov-report=term-missing
 
-data:
-	python -m agentic_ran generate-data --output data/runtime/ran_policy_sample.csv
+lint:
+	ruff check --select E9,F63,F7,F82 .
 
-train: data
-	python -m agentic_ran train --data data/runtime/ran_policy_sample.csv
+typecheck:
+	python -m compileall -q agentic_ran tests
 
-run: train
-	python -m agentic_ran serve
+serve:
+	agentic-ran serve --port 8080
 
-compose:
-	docker compose up --build
+bridge:
+	agentic-ran serve-bridge --port 8090
+
+simulate:
+	agentic-ran control-step --mode simulated --intent green-ran
 
 compose-test:
 	docker compose --profile test up --build --abort-on-container-exit --exit-code-from test test
 
-clean:
-	rm -rf .pytest_cache .ruff_cache .mypy_cache htmlcov .coverage
-	rm -f artifacts/* results/* data/runtime/*
+compose-control:
+	docker compose --profile control up --build

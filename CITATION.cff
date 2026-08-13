@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use Agentic-RAN in academic work, please cite this repository and the exact version or commit used."
+title: "Agentic-RAN: Safety-Governed Agentic Intelligence for Open RAN"
+type: software
+authors:
+  - family-names: Tavakkoli
+    given-names: Vahid
+version: 2.0.0
+date-released: 2026-08-13
+repository-code: "https://github.com/vtavakkoli/Agentic-RAN"
+license: MIT
+keywords:
+  - agentic AI
+  - O-RAN
+  - AI-RAN
+  - 5G
+  - 6G
+  - digital twin
+  - safe AI

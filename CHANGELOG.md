@@ -1,25 +1,42 @@
 # Changelog
 
-All notable changes are documented here.
+All notable changes to Agentic-RAN are documented here.
 
-## 1.0.0 - 2026-08-03
+## 2.0.0 — 2026-08-13
 
 ### Added
 
-- focused agentic RAN policy-selection engine;
-- seven declarative network policies;
-- learned candidate proposer with deterministic safety authority;
-- small reproducible dataset downloader and offline generator;
-- FastAPI service, batch API, web demo, health/readiness, and metrics;
-- Docker Compose download/train/API/test workflow;
-- HTML/JSON benchmark reports;
-- unit, API, integration, safety, and reporting tests;
-- CI, type checking, linting, packaging, and Docker build checks.
+- short-horizon world-model planning and trajectory traces;
+- pluggable surrogate, trace-replay, ns-3, and srsRAN twin adapters;
+- uncertainty aggregation and out-of-distribution gating;
+- independent SLA, energy, stability, uncertainty, and safety critics;
+- temporal policy-churn protection;
+- SLA intents and Pareto-front reporting;
+- multi-cell interference-aware coordination;
+- persistence, EWMA, trend, and ensemble forecasting;
+- offline Fitted Q Iteration and constrained RL baseline;
+- recommendation, shadow, simulated, canary, and active execution modes;
+- E2SM-KPM normalized provider boundary;
+- E2SM-RC Style-2 generic bridge actuator;
+- srsRAN JSON WebSocket telemetry provider;
+- Near-RT xApp and Non-RT rApp orchestration primitives;
+- A1 policy transport adapter;
+- rollback manager;
+- tamper-evident hash-chain audit log;
+- model registry, drift monitor, and promotion gate;
+- fault-injection resilience benchmark;
+- professional v2 API/dashboard;
+- local development E2/twin bridge;
+- srsRAN integration fragment and deployment documentation;
+- expanded tests for v2 safety/control modules.
 
 ### Changed
 
-- replaced heavyweight forecasting/model-comparison scope with an efficient policy-control product.
+- project positioning from a standalone policy selector to a safety-governed O-RAN research control plane;
+- execution is explicitly gated and defaults to recommendation-only;
+- README and architecture documentation now distinguish protocol conformance from bridge integration.
 
-### Removed
+## 1.0.0
 
-- redundant experimental architectures, generated artifacts, legacy scripts, and duplicated result folders.
+- initial lightweight policy-selection engine;
+- Docker workflow, API, web demo, metrics, tests, and benchmark reporting.
