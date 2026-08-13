@@ -1,6 +1,3 @@
-services:
-  prepare-data:
-    extends:
-      file: docker-compose.yml
-      service: api
-    command: ["prepare-real-data", "--catalog", "/workspace/configs/data_sources.yaml", "--raw-dir", "/workspace/data/raw", "--output", "/workspace/data/prepared"]
+# Deprecated compatibility marker.
+# Docker Compose prefers compose.yaml, which contains the complete real-data workflow.
+services: {}
