@@ -39,6 +39,7 @@ def download_source(source: dict[str, Any], raw_root: Path, retries: int = 3) ->
 
     last_error: Exception | None = None
     for attempt in range(retries):
+        temporary: Path | None = None
         try:
             request = urllib.request.Request(
                 str(source["download_url"]),
@@ -48,12 +49,17 @@ def download_source(source: dict[str, Any], raw_root: Path, retries: int = 3) ->
                 shutil.copyfileobj(response, stream)
                 temporary = Path(stream.name)
             if expected and md5_file(temporary) != expected:
-                temporary.unlink(missing_ok=True)
                 raise ValueError(f"Checksum mismatch for {source_id}")
-            temporary.replace(destination)
+            # /tmp and a Docker bind mount may live on different filesystems, so
+            # os.replace()/Path.replace() is not portable here. Copy into the
+            # destination filesystem first and then remove the verified temp file.
+            shutil.copy2(temporary, destination)
+            temporary.unlink(missing_ok=True)
             return destination
         except Exception as exc:  # pragma: no cover - network boundary
             last_error = exc
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
             if attempt + 1 < retries:
                 time.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"Unable to download {source_id}: {last_error}") from last_error
