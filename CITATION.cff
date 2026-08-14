@@ -3,10 +3,8 @@ message: "If you use Agentic-RAN in academic work, please cite this repository a
 title: "Agentic-RAN: Safety-Governed Agentic Intelligence for Open RAN"
 type: software
 authors:
-  - family-names: Tavakkoli
-    given-names: Vahid
-  - family-names: Mohsenzadegan
-    given-names: Kabeh
+  - family-names: Tavakkoli, Mohsenzadegan
+    given-names: Vahid, Kabeh
 version: 2.1.0
 date-released: 2026-08-13
 repository-code: "https://github.com/vtavakkoli/Agentic-RAN"
