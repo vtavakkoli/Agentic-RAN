@@ -7,7 +7,7 @@
 
 **Agentic-RAN is a safety-governed research platform for agentic intelligence in Open RAN, with reproducible real-data benchmarking and explicit deployment-readiness gates.**
 
-The project combines lightweight learned policy proposals with short-horizon planning, pluggable RAN world models, independent critics, uncertainty/OOD gates, multi-cell coordination, rollback and audit. Version 2.1 adds a real-measurement pipeline and multi-model selection benchmark so model choice is based on more than synthetic accuracy.
+The project combines lightweight learned policy proposals with short-horizon planning, pluggable RAN world models, independent critics, uncertainty/OOD gates, multi-cell coordination, rollback and audit. Version 2.2 adds a pinned Colosseum O-RAN COMMAG workflow with compressed sequential transitions, offline Fitted-Q training, experiment-separated testing and reproducible evidence.
 
 > **Machine learning proposes. World models predict. Independent critics verify. Deterministic safety logic owns execution authority.**
 
@@ -78,6 +78,38 @@ docker compose up --build model-selection
 docker compose up --build report
 ```
 
+## COMMAG offline-RL benchmark
+
+The optional `commag` profile uses the public Colosseum O-RAN COMMAG traces without cloning or redistributing the approximately 1.2 GB upstream repository. It downloads a commit-pinned representative core, aggregates 250 ms telemetry to one-second transitions, compresses the result and trains Fitted Q Iteration on `exp1`. All reported test metrics come from disjoint `exp2` episodes.
+
+```bash
+docker compose --profile commag up --build commag-test
+```
+
+The dependency chain is:
+
+```text
+commag-prepare
+      ↓
+commag-train
+      ↓
+commag-test
+```
+
+Generated evidence:
+
+```text
+data/prepared/commag/commag_transitions.csv.gz
+data/prepared/commag/commag_manifest.json
+artifacts/commag_fitted_q.joblib
+results/commag_benchmark.json
+results/commag_report.html
+```
+
+The discrete action combines scheduler and PRB allocation, for example `proportional_fair:prb=8`. The benchmark preserves only actions observed for each slice and reports reward-model error, Bellman residual, logged-action agreement and clearly labelled direct-method estimates.
+
+PPO is deliberately not retrained from fixed CSV logs: PPO is on-policy and requires an interactive environment. The original COMMAG PPO artifacts remain upstream; Agentic-RAN uses Fitted-Q because it is an appropriate offline baseline. See `docs/COMMAG.md` for the protocol and limitations.
+
 ### What `prepare-data` does
 
 The source catalog is `configs/data_sources.yaml`. The default profile downloads public 5G measurement datasets from their original Zenodo records, verifies the published MD5 checksum, normalizes heterogeneous Excel tables and writes compressed outputs:
@@ -97,7 +129,7 @@ The current catalog includes:
 - **Telenor/COMMECT 5G private-network forestry measurements** — RSRP, downlink/uplink throughput, latency and jitter; DOI `10.5281/zenodo.16919567`.
 - **Glasgow 5G Dataset 2025** — signal strength, download/upload throughput and ping across multiple providers/devices; DOI `10.5281/zenodo.20465872`, CC BY 4.0.
 
-Raw third-party files are not redistributed by this repository. The compressed prepared data is generated locally. See `docs/REAL_DATA.md`.
+Raw third-party files are not redistributed by this repository. The compressed prepared data is generated locally. See `docs/REAL_DATA.md` and `THIRD_PARTY_DATA.md`.
 
 ### Measured versus derived RAN inputs
 

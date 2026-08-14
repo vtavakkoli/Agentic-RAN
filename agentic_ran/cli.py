@@ -11,7 +11,12 @@ from pathlib import Path
 
 import uvicorn
 
-from agentic_ran.config import Settings
+from agentic_ran.commag import (
+    COMMAG_REVISION,
+    prepare_commag_data,
+    train_commag_fitted_q,
+    validate_commag_benchmark,
+)
 from agentic_ran.data import download_dataset, generate_dataset, load_dataset, sha256_file, write_dataset
 from agentic_ran.domain import ExecutionMode, NetworkObservation
 from agentic_ran.model import train_policy_proposer, write_training_metrics
@@ -23,8 +28,9 @@ from agentic_ran.scenarios import ResilienceBenchmark
 from agentic_ran.service import PolicyService
 from agentic_ran.telemetry import SrsRANWebSocketProvider, SyntheticTelemetryProvider
 
-
-DEFAULT_DATASET_URL = "https://raw.githubusercontent.com/vtavakkoli/Agentic-RAN/main/data/bootstrap/ran_policy_sample.csv"
+DEFAULT_DATASET_URL = (
+    "https://raw.githubusercontent.com/vtavakkoli/Agentic-RAN/main/data/bootstrap/ran_policy_sample.csv"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,7 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--rows", type=int, default=1_200)
     generate.add_argument("--seed", type=int, default=42)
 
-    download = subparsers.add_parser("download-data", help="Download the small bootstrap dataset with an offline fallback")
+    download = subparsers.add_parser(
+        "download-data", help="Download the small bootstrap dataset with an offline fallback"
+    )
     download.add_argument("--url", default=os.getenv("AGENTIC_RAN_DATASET_URL", DEFAULT_DATASET_URL))
     download.add_argument("--output", default=os.getenv("AGENTIC_RAN_DATASET", "data/runtime/ran_policy_sample.csv"))
     download.add_argument("--sha256", default=os.getenv("AGENTIC_RAN_DATASET_SHA256"))
@@ -49,20 +57,56 @@ def build_parser() -> argparse.ArgumentParser:
     real.add_argument("--output", default="data/prepared")
     real.add_argument("--max-rows-per-source", type=int, default=20_000)
 
+    commag = subparsers.add_parser(
+        "prepare-commag",
+        help="Download a pinned COMMAG core and prepare compressed offline-RL transitions",
+    )
+    commag.add_argument("--raw-dir", default="data/raw/commag")
+    commag.add_argument("--output", default="data/prepared/commag")
+    commag.add_argument("--revision", default=COMMAG_REVISION)
+    commag.add_argument("--train-configs", default="0,1,2")
+    commag.add_argument("--experiments", default="1,2")
+    commag.add_argument("--base-stations", default="1,4")
+    commag.add_argument("--workers", type=int, default=4)
+    commag.add_argument("--max-rows-per-file", type=int, default=0)
+
     train = subparsers.add_parser("train", help="Train the default lightweight policy proposer")
     train.add_argument("--data", default=os.getenv("AGENTIC_RAN_DATASET", "data/runtime/ran_policy_sample.csv"))
     train.add_argument("--model", default=os.getenv("AGENTIC_RAN_MODEL", "artifacts/policy_selector.joblib"))
     train.add_argument("--metrics", default="results/training_metrics.json")
     train.add_argument("--seed", type=int, default=42)
 
-    select = subparsers.add_parser("select-model", help="Compare candidate proposers and train the production-candidate winner")
+    train_commag = subparsers.add_parser(
+        "train-commag",
+        help="Train Fitted-Q on COMMAG exp1 and evaluate on held-out exp2 traces",
+    )
+    train_commag.add_argument("--data", default="data/prepared/commag/commag_transitions.csv.gz")
+    train_commag.add_argument("--manifest", default="data/prepared/commag/commag_manifest.json")
+    train_commag.add_argument("--model", default="artifacts/commag_fitted_q.joblib")
+    train_commag.add_argument("--metrics", default="results/commag_benchmark.json")
+    train_commag.add_argument("--report", default="results/commag_report.html")
+    train_commag.add_argument("--iterations", type=int, default=6)
+    train_commag.add_argument("--gamma", type=float, default=0.97)
+    train_commag.add_argument("--seed", type=int, default=42)
+
+    validate_commag = subparsers.add_parser(
+        "validate-commag",
+        help="Fail when COMMAG benchmark structure or held-out evidence is invalid",
+    )
+    validate_commag.add_argument("--metrics", default="results/commag_benchmark.json")
+
+    select = subparsers.add_parser(
+        "select-model", help="Compare candidate proposers and train the production-candidate winner"
+    )
     select.add_argument("--synthetic", default="data/bootstrap/ran_policy_sample.csv")
     select.add_argument("--real", default="data/prepared/real_policy_eval.csv.gz")
     select.add_argument("--model", default=os.getenv("AGENTIC_RAN_MODEL", "artifacts/policy_selector.joblib"))
     select.add_argument("--metrics", default="results/model_selection.json")
     select.add_argument("--seed", type=int, default=42)
 
-    report = subparsers.add_parser("production-report", help="Generate results/report.html with real-data readiness evidence")
+    report = subparsers.add_parser(
+        "production-report", help="Generate results/report.html with real-data readiness evidence"
+    )
     report.add_argument("--synthetic", default="data/bootstrap/ran_policy_sample.csv")
     report.add_argument("--real", default="data/prepared/real_policy_eval.csv.gz")
     report.add_argument("--selection", default="results/model_selection.json")
@@ -112,6 +156,16 @@ def _payload(args: argparse.Namespace) -> dict:
     return json.loads(args.json if args.json is not None else Path(args.file).read_text(encoding="utf-8"))
 
 
+def _integer_list(value: str) -> tuple[int, ...]:
+    try:
+        result = tuple(int(item.strip()) for item in value.split(",") if item.strip())
+    except ValueError as exc:
+        raise ValueError(f"Expected a comma-separated integer list, received: {value}") from exc
+    if not result:
+        raise ValueError("At least one integer is required")
+    return result
+
+
 async def _control_step(mode: ExecutionMode, intent: str):
     service = PolicyService.load()
     loop = service.control_loop(SyntheticTelemetryProvider(period_seconds=0), mode=mode)
@@ -125,7 +179,11 @@ async def _shadow(url: str, steps: int, intent: str):
     for _ in range(steps):
         result = await loop.step(intent=intent)
         output.append(
-            {"cell": result.observation.cell_id, "policy": result.decision.selected_policy, "confidence": result.decision.confidence}
+            {
+                "cell": result.observation.cell_id,
+                "policy": result.decision.selected_policy,
+                "confidence": result.decision.confidence,
+            }
         )
     return output
 
@@ -150,6 +208,20 @@ def main(argv: list[str] | None = None) -> int:
         manifest = prepare_real_data(args.catalog, args.raw_dir, args.output, args.max_rows_per_source)
         print(json.dumps(manifest, indent=2))
         return 0
+    if args.command == "prepare-commag":
+        manifest = prepare_commag_data(
+            raw_dir=args.raw_dir,
+            output_dir=args.output,
+            revision=args.revision,
+            train_configs=_integer_list(args.train_configs),
+            experiments=_integer_list(args.experiments),
+            base_stations=_integer_list(args.base_stations),
+            workers=args.workers,
+            max_rows_per_file=args.max_rows_per_file or None,
+        )
+        summary = {key: value for key, value in manifest.items() if key != "source_files"}
+        print(json.dumps(summary, indent=2))
+        return 0
     if args.command == "train":
         frame = load_dataset(args.data)
         proposer, metrics = train_policy_proposer(frame, seed=args.seed)
@@ -158,6 +230,34 @@ def main(argv: list[str] | None = None) -> int:
         summary = {key: value for key, value in metrics.items() if key != "classification_report"}
         print(json.dumps({"model": args.model, **summary}, indent=2))
         return 0
+    if args.command == "train-commag":
+        metrics = train_commag_fitted_q(
+            data_path=args.data,
+            model_path=args.model,
+            metrics_path=args.metrics,
+            report_path=args.report,
+            manifest_path=args.manifest,
+            iterations=args.iterations,
+            gamma=args.gamma,
+            seed=args.seed,
+        )
+        print(
+            json.dumps(
+                {
+                    "model": args.model,
+                    "metrics": args.metrics,
+                    "report": args.report,
+                    "verdict": metrics["verdict"],
+                    "held_out": metrics["held_out"],
+                },
+                indent=2,
+            )
+        )
+        return 0
+    if args.command == "validate-commag":
+        valid, errors = validate_commag_benchmark(args.metrics)
+        print(json.dumps({"valid": valid, "errors": errors}, indent=2))
+        return 0 if valid else 2
     if args.command == "select-model":
         metrics = select_production_model(args.synthetic, args.real, args.model, args.metrics, seed=args.seed)
         print(json.dumps(metrics, indent=2))

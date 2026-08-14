@@ -22,6 +22,53 @@ services:
     command: ["prepare-real-data", "--catalog", "/workspace/configs/data_sources.yaml", "--raw-dir", "/workspace/data/raw", "--output", "/workspace/data/prepared"]
     restart: "no"
 
+  commag-prepare:
+    <<: *app
+    profiles: ["commag"]
+    command:
+      - prepare-commag
+      - --raw-dir
+      - /workspace/data/raw/commag
+      - --output
+      - /workspace/data/prepared/commag
+      - --base-stations
+      - ${AGENTIC_RAN_COMMAG_BASE_STATIONS:-1,4}
+      - --workers
+      - ${AGENTIC_RAN_COMMAG_WORKERS:-4}
+    restart: "no"
+
+  commag-train:
+    <<: *app
+    profiles: ["commag"]
+    depends_on:
+      commag-prepare:
+        condition: service_completed_successfully
+    command:
+      - train-commag
+      - --data
+      - /workspace/data/prepared/commag/commag_transitions.csv.gz
+      - --manifest
+      - /workspace/data/prepared/commag/commag_manifest.json
+      - --model
+      - /workspace/artifacts/commag_fitted_q.joblib
+      - --metrics
+      - /workspace/results/commag_benchmark.json
+      - --report
+      - /workspace/results/commag_report.html
+    restart: "no"
+
+  commag-test:
+    <<: *app
+    profiles: ["commag"]
+    depends_on:
+      commag-train:
+        condition: service_completed_successfully
+    command:
+      - validate-commag
+      - --metrics
+      - /workspace/results/commag_benchmark.json
+    restart: "no"
+
   model-selection:
     <<: *app
     depends_on:
