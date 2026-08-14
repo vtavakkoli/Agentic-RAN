@@ -1,6 +1,16 @@
 services:
   prepare-data:
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+  commag-prepare:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+  commag-train:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    volumes:
+      - ./artifacts:/workspace/artifacts
+  commag-test:
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    volumes:
+      - ./artifacts:/workspace/artifacts
   model-selection:
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     volumes:

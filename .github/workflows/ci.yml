@@ -130,11 +130,14 @@ jobs:
       - name: Prepare host directories
         run: mkdir -p data/raw/commag data/prepared/commag results artifacts
       - name: Prepare the pinned COMMAG core
-        run: docker compose --profile commag run --rm --no-deps commag-prepare
+        run: |
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose --profile commag run --rm --no-deps commag-prepare
       - name: Train on exp1 and evaluate on exp2
-        run: docker compose --profile commag run --rm --no-deps commag-train
+        run: |
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose --profile commag run --rm --no-deps commag-train
       - name: Validate generated evidence
-        run: docker compose --profile commag run --rm --no-deps commag-test
+        run: |
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose --profile commag run --rm --no-deps commag-test
       - name: Verify generated evidence
         run: |
           test -s data/prepared/commag/commag_transitions.csv.gz
