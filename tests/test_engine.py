@@ -84,3 +84,27 @@ def test_decision_is_deterministic_for_same_model_and_observation(trained_servic
     second = trained_service.decide(sample)
     assert first.selected_policy == second.selected_policy
     assert first.expected_kpis == second.expected_kpis
+
+
+def test_no_candidate_can_be_force_approved_after_hard_sla_rejection(trained_service: PolicyService) -> None:
+    decision = trained_service.decide(
+        observation(
+            slice_type="URLLC",
+            prb_utilization=0.80,
+            latency_ms=23.8,
+            packet_loss_pct=0.93,
+            throughput_demand_mbps=50.4,
+            downlink_mbps=44.7,
+            energy_load=0.74,
+            sinr_db=12.0,
+        ),
+        intent="urllc-strict",
+    )
+    selected = next(item for item in decision.candidates if item.policy == decision.selected_policy)
+
+    assert decision.selected_policy == "balanced"
+    assert not selected.safe
+    assert not decision.approved_for_execution
+    assert decision.trace.pareto_policies == []
+    assert decision.trace.rejected_policies.count("balanced") == 1
+    assert "non-executable" in decision.explanation

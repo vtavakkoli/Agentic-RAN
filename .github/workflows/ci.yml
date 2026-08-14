@@ -117,3 +117,39 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose down -v --remove-orphans
+
+  commag:
+    name: COMMAG / offline Fitted-Q / held-out test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      AGENTIC_RAN_COMMAG_BASE_STATIONS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Prepare host directories
+        run: mkdir -p data/raw/commag data/prepared/commag results artifacts
+      - name: Prepare the pinned COMMAG core
+        run: docker compose --profile commag run --rm --no-deps commag-prepare
+      - name: Train on exp1 and evaluate on exp2
+        run: docker compose --profile commag run --rm --no-deps commag-train
+      - name: Validate generated evidence
+        run: docker compose --profile commag run --rm --no-deps commag-test
+      - name: Verify generated evidence
+        run: |
+          test -s data/prepared/commag/commag_transitions.csv.gz
+          test -s data/prepared/commag/commag_manifest.json
+          test -s results/commag_benchmark.json
+          test -s results/commag_report.html
+          grep -q "COMMAG benchmark report" results/commag_report.html
+      - name: Upload COMMAG evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: commag-offline-rl-report
+          path: |
+            data/prepared/commag/commag_manifest.json
+            results/commag_benchmark.json
+            results/commag_report.html
+      - name: Cleanup
+        if: always()
+        run: docker compose --profile commag down -v --remove-orphans

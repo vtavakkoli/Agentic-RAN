@@ -2,6 +2,22 @@
 
 All notable changes to Agentic-RAN are documented here.
 
+## 2.2.0 — 2026-08-14
+
+### Added
+
+- pinned Colosseum O-RAN COMMAG compact data profile without cloning the full upstream repository;
+- 250 ms to one-second KPI aggregation and compressed sequential transition generation;
+- experiment-separated offline Fitted-Q training and held-out value-model evaluation;
+- scheduler/PRB action support guards, provenance, hashes and a self-contained COMMAG HTML report;
+- `commag-prepare → commag-train → commag-test` Docker Compose workflow;
+- explicit third-party data licensing and COMMAG citation documentation.
+
+### Fixed
+
+- hard-SLA fallback decisions are no longer force-labelled safe or approved for execution;
+- `CITATION.cff` now represents Vahid Tavakkoli and Kabeh Mohsenzadegan as separate authors.
+
 ## 2.1.0 — 2026-08-13
 
 ### Added

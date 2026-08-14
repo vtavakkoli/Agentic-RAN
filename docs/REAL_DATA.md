@@ -2,6 +2,8 @@
 
 Agentic-RAN can complement its deterministic bootstrap dataset with public 5G measurement data. The goal is external realism and shadow evaluation, not to claim that public measurements contain operator control ground truth.
 
+For scheduler/PRB actions, sequential transitions and offline Fitted-Q evaluation, use the separate pinned COMMAG profile described in `docs/COMMAG.md`.
+
 ## Default sources
 
 The source catalog is `configs/data_sources.yaml`. It currently includes the Telenor/COMMECT 5G private-network forestry measurements and the Glasgow 5G Dataset 2025. Raw files are fetched from the original Zenodo records, checksum-verified, and kept under `data/raw/`.
