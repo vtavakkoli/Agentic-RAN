@@ -75,10 +75,11 @@ PPO should be added only with an interactive Colosseum, ns-3, srsRAN or calibrat
 ## Docker
 
 ```bash
-docker compose --profile commag up --build commag-test
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+  docker compose --profile commag up --build commag-test
 ```
 
-This executes `commag-prepare → commag-train → commag-test` and writes `results/commag_report.html`.
+This executes `commag-prepare → commag-train → commag-test` and writes `results/commag_report.html`. Mapping the host UID/GID keeps the containers non-root while allowing them to write the bind-mounted `data/`, `artifacts/` and `results/` directories on Linux.
 
 ## License and citation
 

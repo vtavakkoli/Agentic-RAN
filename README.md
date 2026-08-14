@@ -83,7 +83,8 @@ docker compose up --build report
 The optional `commag` profile uses the public Colosseum O-RAN COMMAG traces without cloning or redistributing the approximately 1.2 GB upstream repository. It downloads a commit-pinned representative core, aggregates 250 ms telemetry to one-second transitions, compresses the result and trains Fitted Q Iteration on `exp1`. All reported test metrics come from disjoint `exp2` episodes.
 
 ```bash
-docker compose --profile commag up --build commag-test
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+  docker compose --profile commag up --build commag-test
 ```
 
 The dependency chain is:
