@@ -90,14 +90,20 @@ mkdir -p data/raw/commag data/prepared/commag artifacts/offline-policy \
   results/prepare-data results/train results/test
 ```
 
-Run the complete dependency chain. `prepare-data` must finish successfully before `train`, and `train` must finish successfully before `test`:
+The Compose pipeline uses four explicit one-shot stages:
+
+```text
+prepare-data -> prepare-report -> train -> test
+```
+
+Run the complete dependency chain:
 
 ```bash
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
   docker compose -f docker-compose.offline-study.yml up --build test
 ```
 
-Do not use `--abort-on-container-exit` for this workflow: `prepare-data` and `train` are intentionally one-shot services that exit successfully before the next stage starts.
+Do not use `--abort-on-container-exit`: the dependency services are intentionally expected to exit successfully before the next stage starts.
 
 On Windows PowerShell:
 
@@ -105,11 +111,21 @@ On Windows PowerShell:
 docker compose -f docker-compose.offline-study.yml up --build test
 ```
 
-Or run the stages explicitly:
+For a clean retry after changing the Compose definition:
+
+```bash
+docker compose -f docker-compose.offline-study.yml down --remove-orphans
+docker compose -f docker-compose.offline-study.yml up --build --force-recreate test
+```
+
+Or run all stages explicitly without dependency re-execution:
 
 ```bash
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
   docker compose -f docker-compose.offline-study.yml run --rm --no-deps prepare-data
+
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+  docker compose -f docker-compose.offline-study.yml run --rm --no-deps prepare-report
 
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
   docker compose -f docker-compose.offline-study.yml run --rm --no-deps train
