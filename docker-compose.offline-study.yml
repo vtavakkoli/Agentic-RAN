@@ -18,16 +18,17 @@ services:
   prepare-data:
     <<: *study
     entrypoint: ["/bin/sh", "-lc"]
-    command: >-
-      agentic-ran prepare-commag
-      --raw-dir /workspace/data/raw/commag
-      --output /workspace/data/prepared/commag
-      --base-stations ${AGENTIC_RAN_COMMAG_BASE_STATIONS:-1,4}
-      --workers ${AGENTIC_RAN_COMMAG_WORKERS:-4}
-      && python -m agentic_ran.offline_policy prepare-report
-      --data /workspace/data/prepared/commag/commag_transitions.csv.gz
-      --manifest /workspace/data/prepared/commag/commag_manifest.json
-      --output /workspace/results/prepare-data
+    command:
+      - >-
+        agentic-ran prepare-commag
+        --raw-dir /workspace/data/raw/commag
+        --output /workspace/data/prepared/commag
+        --base-stations ${AGENTIC_RAN_COMMAG_BASE_STATIONS:-1,4}
+        --workers ${AGENTIC_RAN_COMMAG_WORKERS:-4}
+        && python -m agentic_ran.offline_policy prepare-report
+        --data /workspace/data/prepared/commag/commag_transitions.csv.gz
+        --manifest /workspace/data/prepared/commag/commag_manifest.json
+        --output /workspace/results/prepare-data
 
   train:
     <<: *study
