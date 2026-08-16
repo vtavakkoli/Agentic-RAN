@@ -1,0 +1,26 @@
+offline_policy:
+  # Immediate multi-objective cost weights. Lower SLA/energy/stability/uncertainty is better.
+  sla_weight: 0.50
+  energy_weight: 0.20
+  stability_weight: 0.15
+  uncertainty_weight: 0.10
+  planning_weight: 0.05
+
+  # Conservative gates. Values are normalized cost/risk scores in [0, 1].
+  sla_threshold: 0.45
+  uncertainty_threshold: 0.50
+  ood_threshold: 0.65
+
+  # Fitted-Q planning and tree sizing.
+  q_gamma: 0.97
+  q_iterations: 4
+  estimators: 96
+  min_samples_leaf: 3
+  oof_folds: 4
+
+  # Paper-oriented robustness evaluation.
+  robustness_seeds: 30
+  latency_samples: 128
+
+  # Use deterministic single-process tree fitting inside each seed to avoid nested oversubscription.
+  parallel_jobs: 1
