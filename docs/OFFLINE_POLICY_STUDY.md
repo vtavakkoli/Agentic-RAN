@@ -90,26 +90,36 @@ mkdir -p data/raw/commag data/prepared/commag artifacts/offline-policy \
   results/prepare-data results/train results/test
 ```
 
-Run the complete chain:
+Run the complete dependency chain. `prepare-data` must finish successfully before `train`, and `train` must finish successfully before `test`:
 
 ```bash
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
-  docker compose -f docker-compose.offline-study.yml up --build --abort-on-container-exit test
+  docker compose -f docker-compose.offline-study.yml up --build test
+```
+
+Do not use `--abort-on-container-exit` for this workflow: `prepare-data` and `train` are intentionally one-shot services that exit successfully before the next stage starts.
+
+On Windows PowerShell:
+
+```powershell
+docker compose -f docker-compose.offline-study.yml up --build test
 ```
 
 Or run the stages explicitly:
 
 ```bash
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
-  docker compose -f docker-compose.offline-study.yml run --rm prepare-data
+  docker compose -f docker-compose.offline-study.yml run --rm --no-deps prepare-data
 
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
-  docker compose -f docker-compose.offline-study.yml run --rm train
+  docker compose -f docker-compose.offline-study.yml run --rm --no-deps train
 
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
   AGENTIC_RAN_STUDY_SEEDS=30 \
-  docker compose -f docker-compose.offline-study.yml run --rm test
+  docker compose -f docker-compose.offline-study.yml run --rm --no-deps test
 ```
+
+COMMAG source downloads are cached at `data/raw/commag`: an existing non-empty file is reused. The preparation, training and evaluation stages still rerun so reports and model artifacts reflect the current code and configuration.
 
 ## Outputs for a paper
 
