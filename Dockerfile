@@ -25,6 +25,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     AGENTIC_RAN_EXECUTION_MODE=recommend \
     AGENTIC_RAN_PLANNING_HORIZON=3
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid ${APP_UID} agentic \
     && useradd --uid ${APP_UID} --gid agentic --create-home --shell /usr/sbin/nologin agentic
 WORKDIR /workspace
