@@ -17,7 +17,7 @@ x-study: &study
 services:
   prepare-full-commag:
     <<: *study
-    entrypoint: ["python", "-m", "agentic_ran.publication_v2"]
+    entrypoint: ["python", "-m", "agentic_ran.publication"]
     command:
       - prepare
       - --raw-dir
@@ -29,38 +29,16 @@ services:
       - --workers
       - ${AGENTIC_RAN_COMMAG_WORKERS:-4}
 
-  original-ppo:
-    build:
-      context: .
-      dockerfile: Dockerfile.ppo-legacy
-    image: agentic-ran:commag-original-ppo
-    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
-    depends_on:
-      prepare-full-commag:
-        condition: service_completed_successfully
-    volumes:
-      - ./data:/workspace/data
-    command:
-      - --raw-dir
-      - /workspace/data/raw/commag
-      - --prepared
-      - /workspace/data/prepared/commag-publication/commag_publication_transitions.csv.gz
-      - --output
-      - /workspace/data/prepared/commag-publication/original_ppo_actions.csv.gz
-    restart: "no"
-
   publication-test:
     <<: *study
     depends_on:
-      original-ppo:
+      prepare-full-commag:
         condition: service_completed_successfully
-    entrypoint: ["python", "-m", "agentic_ran.publication_v2"]
+    entrypoint: ["python", "-m", "agentic_ran.publication"]
     command:
       - evaluate
       - --data
       - /workspace/data/prepared/commag-publication/commag_publication_transitions.csv.gz
-      - --original-ppo-export
-      - /workspace/data/prepared/commag-publication/original_ppo_actions.csv.gz
       - --output
       - /workspace/results/publication
       - --config
