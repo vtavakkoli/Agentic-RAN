@@ -1,0 +1,69 @@
+name: agentic-ran-publication
+
+x-study: &study
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: agentic-ran:publication
+  user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+  environment:
+    PYTHONUNBUFFERED: "1"
+  volumes:
+    - ./data:/workspace/data
+    - ./artifacts:/workspace/artifacts
+    - ./results:/workspace/results
+  restart: "no"
+
+services:
+  prepare-full-commag:
+    <<: *study
+    entrypoint: ["python", "-m", "agentic_ran.publication_v2"]
+    command:
+      - prepare
+      - --raw-dir
+      - /workspace/data/raw/commag
+      - --output
+      - /workspace/data/prepared/commag-publication
+      - --config
+      - /workspace/configs/full_commag_publication.yaml
+      - --workers
+      - ${AGENTIC_RAN_COMMAG_WORKERS:-4}
+
+  original-ppo:
+    build:
+      context: .
+      dockerfile: Dockerfile.ppo-legacy
+    image: agentic-ran:commag-original-ppo
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    depends_on:
+      prepare-full-commag:
+        condition: service_completed_successfully
+    volumes:
+      - ./data:/workspace/data
+    command:
+      - --raw-dir
+      - /workspace/data/raw/commag
+      - --prepared
+      - /workspace/data/prepared/commag-publication/commag_publication_transitions.csv.gz
+      - --output
+      - /workspace/data/prepared/commag-publication/original_ppo_actions.csv.gz
+    restart: "no"
+
+  publication-test:
+    <<: *study
+    depends_on:
+      original-ppo:
+        condition: service_completed_successfully
+    entrypoint: ["python", "-m", "agentic_ran.publication_v2"]
+    command:
+      - evaluate
+      - --data
+      - /workspace/data/prepared/commag-publication/commag_publication_transitions.csv.gz
+      - --original-ppo-export
+      - /workspace/data/prepared/commag-publication/original_ppo_actions.csv.gz
+      - --output
+      - /workspace/results/publication
+      - --config
+      - /workspace/configs/full_commag_publication.yaml
+      - --seed
+      - ${AGENTIC_RAN_PUBLICATION_SEED:-2026}

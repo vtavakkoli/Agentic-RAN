@@ -1,0 +1,31 @@
+FROM python:3.7-slim
+
+ARG COMMAG_REVISION=7331cd725fe42b5b9930fdc8acee3006cea00bd7
+ENV PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TF_CPP_MIN_LOG_LEVEL=2
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Reproduce the historical stack used by the upstream release as closely as
+# practical while keeping the exact published SavedModel/encoder artifacts.
+RUN python -m pip install --upgrade "pip<24" \
+    && python -m pip install \
+      "cloudpickle==1.4.1" \
+      "numpy<1.19.0" \
+      "pandas<1.2" \
+      "scipy==1.4.1" \
+      "tensorflow==2.3.0" \
+      "tensorflow-probability==0.11.0" \
+      "tf-agents==0.6.0"
+
+RUN git clone --filter=blob:none --no-checkout \
+      https://github.com/wineslab/colosseum-oran-commag-dataset.git /opt/commag \
+    && cd /opt/commag \
+    && git checkout ${COMMAG_REVISION} -- ml_models
+
+WORKDIR /workspace
+COPY scripts/export_original_ppo.py /workspace/export_original_ppo.py
+ENTRYPOINT ["python", "/workspace/export_original_ppo.py"]
