@@ -3,7 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from agentic_ran.publication_v2 import PubConfig, filter_paths, paired, ppo_actions, shortcut
+from agentic_ran.publication import PAPER_REFERENCE
+from agentic_ran.publication_v2 import PubConfig, filter_paths, paired, shortcut
 
 
 def _config() -> PubConfig:
@@ -127,23 +128,12 @@ def test_shortcut_reports_policy_change_only_performance():
     assert result["agreement_policy_change"].notna().all()
 
 
-def test_ppo_export_combines_scheduler_with_logged_next_prb(tmp_path):
-    frame = pd.DataFrame(
-        {
-            "scenario": ["rome_static_far"],
-            "training_config": ["tr15"],
-            "experiment": ["exp1"],
-            "base_station": ["bs1"],
-            "timestamp_s": [10],
-            "slice_type": ["eMBB"],
-            "next_slice_prb": [4],
-        }
-    )
-    export = frame[
-        ["scenario", "training_config", "experiment", "base_station", "timestamp_s", "slice_type"]
-    ].copy()
-    export["scheduler_code"] = 2
-    path = tmp_path / "ppo.csv.gz"
-    export.to_csv(path, index=False, compression="gzip")
-    actions = ppo_actions(path, frame)
-    assert actions.tolist() == ["proportional_fair:prb=4"]
+def test_original_ppo_is_literature_reference_only():
+    assert PAPER_REFERENCE["type"] == "literature_reference_only"
+    assert PAPER_REFERENCE["reported_results"]["embb_spectral_efficiency_gain"]["value_percent"] == 20
+    assert PAPER_REFERENCE["reported_results"]["urllc_average_buffer_reduction_percent"] == {
+        "vs_round_robin": 37,
+        "vs_waterfilling": 5,
+        "vs_proportional_fair": 17,
+    }
+    assert "must not be inserted" in PAPER_REFERENCE["comparison_rule"]
