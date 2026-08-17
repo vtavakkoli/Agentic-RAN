@@ -1,12 +1,36 @@
 # Original COMMAG PPO baseline
 
-The upstream COMMAG repository publishes the original PPO agents and encoder used in the accompanying experimental work. Those artifacts depend on a historical TensorFlow/stable-baselines environment that is not silently converted by this repository.
+The upstream COMMAG repository publishes the three slice-specific SavedModel policies (`embb_policy`, `mtc_policy`, `urllc_policy`) and `encoder.h5`. The publication workflow loads those exact artifacts in `Dockerfile.ppo-legacy` and exports scheduler decisions before the main benchmark runs.
 
-The publication benchmark therefore treats the original PPO result as an explicit compatibility baseline:
+## Reproducible replay adapter
 
-1. run the upstream models in their compatible environment/container;
-2. export one row per evaluated transition with `episode_id,selected_action`;
-3. place the file at `data/prepared/commag-publication/original_ppo_actions.csv.gz`;
-4. rerun the publication evaluation so the exact upstream decisions are scored with the same direct-method critics and paired episode statistics.
+`scripts/export_original_ppo.py` follows the release preprocessing relevant to inference:
 
-This avoids claiming that a reimplemented policy is the "original PPO" when the published weights could not be loaded exactly.
+- discard rows with zero requested PRBs;
+- scale downlink buffer by `100000`;
+- derive granted/requested PRB ratio and clip it to `[0,1]`;
+- build ten observations per slice for the encoder;
+- append the current slice PRB value to the encoded observation;
+- invoke the corresponding published TensorFlow SavedModel policy.
+
+For reproducible joining to the transition table, the adapter forms deterministic per-second groups instead of using the release script's random sampling loop. Therefore the repository uses the **exact published model weights and input transformation**, but does not claim bit-for-bit reproduction of the original demonstration loop.
+
+## Action-space caveat
+
+The original PPO outputs a scheduler code. The Agentic-RAN publication policy uses a joint `scheduler:prb=<n>` action. To compare them without inventing a PPO PRB controller, evaluation combines the PPO scheduler output with the logged next-step slice PRB allocation. Results are consequently labeled `original_commag_ppo_scheduler` and must be interpreted as a scheduler-only baseline with exogenous PRB allocation.
+
+## Docker chain
+
+The normal publication command performs the PPO export automatically:
+
+```bash
+docker compose -f docker-compose.publication.yml up --build publication-test
+```
+
+The dependency chain is:
+
+```text
+prepare-full-commag -> original-ppo -> publication-test
+```
+
+The exported scheduler decisions are stored at `data/prepared/commag-publication/original_ppo_actions.csv.gz` and then scored with the same direct-method critics and paired episode statistics as the other baselines.
