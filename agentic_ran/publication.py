@@ -54,17 +54,17 @@ def evaluate(
     cfg: PubConfig,
     seed: int | None = None,
 ) -> dict[str, Any]:
-    result = evaluate_reproducible(data_path, output, cfg, seed, ppo_export=None)
     destination = Path(output)
     destination.mkdir(parents=True, exist_ok=True)
+    disabled_ppo = destination / ".ppo-runtime-disabled"
+    disabled_ppo.unlink(missing_ok=True)
 
+    result = evaluate_reproducible(data_path, output, cfg, seed, ppo_export=disabled_ppo)
     result["verdict"] = "PUBLICATION-BENCHMARK-READY"
     result.pop("original_ppo_available", None)
     result["literature_reference"] = PAPER_REFERENCE
     result["limitations"] = [
-        item
-        for item in result.get("limitations", [])
-        if "original COMMAG PPO" not in item
+        item for item in result.get("limitations", []) if "original COMMAG PPO" not in item
     ]
     result["limitations"].append(
         "The original COMMAG PPO numbers are literature-reference results and are not reproduced or used in paired tests."
