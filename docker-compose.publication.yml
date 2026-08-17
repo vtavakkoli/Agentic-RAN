@@ -43,5 +43,7 @@ services:
       - /workspace/results/publication
       - --config
       - /workspace/configs/full_commag_publication.yaml
+      - --science-config
+      - /workspace/configs/final_publication.yaml
       - --seed
       - ${AGENTIC_RAN_PUBLICATION_SEED:-2026}

@@ -1,0 +1,35 @@
+final_publication:
+  # The 12 training configurations (tr0-tr11) are partitioned automatically.
+  # A coverage-maximizing subset is reserved exclusively for independent OPE.
+  ope_config_count: 4
+
+  evaluator_folds: 4
+  evaluator_max_iter: 96
+
+  # OOD threshold is calibrated on seen validation data only.
+  target_validation_ood_fpr: 0.01
+  reference_sla_threshold: 0.45
+
+  # Predeclared validation-only controller search space.
+  sla_threshold_grid: [0.40, 0.45, 0.50]
+  uncertainty_threshold_grid: [0.40, 0.50, 0.60]
+  planning_weight_grid: [0.00, 0.03, 0.05]
+  switch_margin_grid: [0.00, 0.005, 0.010, 0.020]
+
+  # CQL alpha is tuned only on validation with the independent evaluator.
+  cql_alpha_grid: [0.05, 0.15, 0.30]
+  cql_tuning_epochs: 40
+
+  bootstrap_samples: 5000
+  permutation_samples: 10000
+
+  # Validation objective prioritizes independent-OPE utility while penalizing
+  # SLA violations, churn, and rollback. These values are frozen before tests.
+  calibration_sla_penalty: 0.15
+  calibration_churn_penalty: 0.03
+  calibration_rollback_penalty: 0.02
+  max_validation_sla_regression: 0.01
+
+  evaluator_support_gate: 0.95
+  latency_samples: 24
+  random_seed: 2026

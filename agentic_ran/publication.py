@@ -1,9 +1,4 @@
-"""Python 3.13 publication benchmark entrypoint.
-
-The executable benchmark evaluates only methods that are reproducible in the current
-runtime. The original COMMAG PPO result is retained as a literature reference from
-the published paper and is never mixed with direct-method utility comparisons.
-"""
+"""Python 3.13 entrypoint for the final COMMAG publication benchmark."""
 from __future__ import annotations
 
 import argparse
@@ -12,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from agentic_ran.publication_data import prepare
-from agentic_ran.publication_v2 import PubConfig, evaluate as evaluate_reproducible, load_config
-
+from agentic_ran.publication_science import load_science_config, run_final_benchmark
+from agentic_ran.publication_v2 import PubConfig, load_config
 
 PAPER_REFERENCE: dict[str, Any] = {
     "type": "literature_reference_only",
@@ -52,32 +47,19 @@ PAPER_REFERENCE: dict[str, Any] = {
 def evaluate(
     data_path: str | Path,
     output: str | Path,
-    cfg: PubConfig,
+    pub_cfg: PubConfig,
+    science_config: str | Path,
     seed: int | None = None,
 ) -> dict[str, Any]:
-    destination = Path(output)
-    destination.mkdir(parents=True, exist_ok=True)
-    disabled_ppo = destination / ".ppo-runtime-disabled"
-    disabled_ppo.unlink(missing_ok=True)
-
-    result = evaluate_reproducible(data_path, output, cfg, seed, ppo_export=disabled_ppo)
-    result["verdict"] = "PUBLICATION-BENCHMARK-READY"
-    result.pop("original_ppo_available", None)
-    result["literature_reference"] = PAPER_REFERENCE
-    result["limitations"] = [
-        item for item in result.get("limitations", []) if "original COMMAG PPO" not in item
-    ]
-    result["limitations"].append(
-        "The original COMMAG PPO numbers are literature-reference results and are not reproduced or used in paired tests."
+    science = load_science_config(science_config)
+    return run_final_benchmark(
+        data_path,
+        output,
+        pub_cfg,
+        science,
+        seed=seed,
+        literature_reference=PAPER_REFERENCE,
     )
-
-    (destination / "literature_reference.json").write_text(
-        json.dumps(PAPER_REFERENCE, indent=2), encoding="utf-8"
-    )
-    (destination / "publication_summary.json").write_text(
-        json.dumps(result, indent=2), encoding="utf-8"
-    )
-    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -93,18 +75,32 @@ def main(argv: list[str] | None = None) -> int:
 
     evaluate_cmd = sub.add_parser("evaluate")
     evaluate_cmd.add_argument(
-        "--data", default="data/prepared/commag-publication/commag_publication_transitions.csv.gz"
+        "--data",
+        default="data/prepared/commag-publication/commag_publication_transitions.csv.gz",
     )
     evaluate_cmd.add_argument("--output", default="results/publication")
     evaluate_cmd.add_argument("--config", default="configs/full_commag_publication.yaml")
+    evaluate_cmd.add_argument("--science-config", default="configs/final_publication.yaml")
     evaluate_cmd.add_argument("--seed", type=int, default=0)
 
     args = parser.parse_args(argv)
-    cfg = load_config(args.config)
+    pub_cfg = load_config(args.config)
     if args.cmd == "prepare":
-        result = prepare(args.raw_dir, args.output, cfg, args.workers, args.max_rows_per_file or None)
+        result = prepare(
+            args.raw_dir,
+            args.output,
+            pub_cfg,
+            args.workers,
+            args.max_rows_per_file or None,
+        )
     else:
-        result = evaluate(args.data, args.output, cfg, args.seed or None)
+        result = evaluate(
+            args.data,
+            args.output,
+            pub_cfg,
+            args.science_config,
+            args.seed or None,
+        )
     print(json.dumps(result, indent=2))
     return 0
 
