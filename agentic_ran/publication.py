@@ -11,7 +11,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agentic_ran.publication_v2 import PubConfig, evaluate as evaluate_reproducible, load_config, prepare
+from agentic_ran.publication_data import prepare
+from agentic_ran.publication_v2 import PubConfig, evaluate as evaluate_reproducible, load_config
 
 
 PAPER_REFERENCE: dict[str, Any] = {
