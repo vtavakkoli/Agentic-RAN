@@ -3,7 +3,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from agentic_ran.commag import COMMAG_REVISION
 from agentic_ran.publication import PAPER_REFERENCE
+from agentic_ran.publication_data import discover_tree
 from agentic_ran.publication_v2 import PubConfig, filter_paths, paired, shortcut
 
 
@@ -20,6 +22,16 @@ def _config() -> PubConfig:
         permutation_samples=200,
         cql_epochs=5,
     )
+
+
+def test_git_tree_discovery_reuses_cached_listing(tmp_path):
+    cache = tmp_path / f".tree-git-{COMMAG_REVISION}.txt"
+    expected = [
+        "slice_traffic/rome_static_close/tr0/exp1/bs1/slices_bs1/1010123456002_metrics.csv",
+        "slice_traffic/rome_static_far/tr3/exp2/bs4/slices_bs4/1010123456035_metrics.csv",
+    ]
+    cache.write_text("\n".join(expected) + "\n", encoding="utf-8")
+    assert discover_tree(tmp_path) == expected
 
 
 def test_filter_paths_keeps_all_existing_ue_files_in_requested_cells():
