@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from agentic_ran.publication_crossfit import run_final_benchmark
 from agentic_ran.publication_data import prepare
-from agentic_ran.publication_science import load_science_config, run_final_benchmark
+from agentic_ran.publication_science import load_science_config
 from agentic_ran.publication_v2 import PubConfig, load_config
 
 PAPER_REFERENCE: dict[str, Any] = {
