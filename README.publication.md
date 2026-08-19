@@ -16,7 +16,7 @@ prepare-full-commag -> publication-test
 
 ## Scientific protocol
 
-The prepared COMMAG table retains the existing condition split:
+The prepared COMMAG table retains the fixed condition split:
 
 - `tr0`–`tr11`: training pool on `rome_static_close` and `rome_static_medium`;
 - `tr12`–`tr14`: seen-condition validation;
@@ -24,22 +24,35 @@ The prepared COMMAG table retains the existing condition split:
 - `rome_static_far`: unseen RF-distance shift;
 - `rome_slow_close`: unseen mobility shift.
 
-The final evaluator adds a second separation inside the training pool. A deterministic coverage-maximizing subset of training configurations is reserved exclusively for the independent outcome/OPE evaluator; the remaining training configurations fit the proposed controller and reproduced baselines. The two roles have disjoint episodes.
+### Experiment-level cross-fitted policy/OPE roles
 
-Validation is now used, rather than merely loaded. It freezes:
+The final evaluator does **not** hold out whole training configurations for OPE. That older design could leave the independent evaluator without support for most selected scheduler+PRB actions.
 
-- SLA safety threshold;
-- uncertainty threshold;
-- OOD threshold, calibrated to a target false-positive rate on seen validation data only;
-- planning weight;
-- switching/hysteresis margin;
-- linear-CQL alpha.
+Instead, the two COMMAG experiments are role-swapped:
 
-Seen and unseen test rows are not used during calibration.
+```text
+Fold A: policy/baselines <- exp1 | independent OPE <- exp2
+Fold B: policy/baselines <- exp2 | independent OPE <- exp1
+```
+
+Each fold retains all `tr0`–`tr11` training configurations on both evidence roles. Validation and final-test rows are routed by the policy-fit experiment, so every final-test row is evaluated exactly once.
+
+### Common action support / positivity
+
+For each slice, the executable action set is restricted to scheduler+PRB actions observed in **both** the policy-fit and OPE-fit roles. The same common-support mask applies to:
+
+- proposed controller selection;
+- FQI;
+- linear CQL;
+- HGB behavior baseline normalization.
+
+`partition.json` exports the exact per-fold support and readiness requires substantial non-trivial overlap, not merely a single supported action.
+
+Validation freezes SLA/uncertainty/OOD thresholds, planning weight, switching/hysteresis margin, and linear-CQL alpha without using final-test data.
 
 ## Primary evidence
 
-Counterfactual outcomes for the proposed method, FQI, linear CQL, and HistGradientBoosting are scored by an **independent HistGradientBoosting outcome evaluator** trained on the reserved OPE subset. The policy's own critics are not used as the primary final evaluator.
+Counterfactual outcomes for the proposed method, FQI, linear CQL, and HGB are scored by an **independent HistGradientBoosting outcome evaluator fitted on the opposite experiment role**. The policy's own critics are never the primary final evaluator.
 
 Primary inference is clustered by:
 
@@ -49,11 +62,11 @@ scenario × training configuration × experiment
 
 UE/episode-level inference is exported only as a secondary sensitivity analysis. Cluster bootstrap confidence intervals, paired random-sign permutation tests, and Cohen's `dz` are reported.
 
-OOD evaluation now includes AUROC, AUPRC, FPR@95%TPR, validation-calibrated threshold performance, per-unseen-scenario discrimination, and threshold sensitivity.
+OOD evaluation includes AUROC, AUPRC, FPR@95%TPR, validation-calibrated threshold performance, per-unseen-scenario discrimination, and threshold sensitivity. A weak OOD result is treated as a claim restriction rather than hidden or promoted as a headline contribution.
 
-A transition audit checks scheduler changes, PRB changes, and joint-action changes. If the prepared traces contain no within-episode policy changes, the report no longer pretends policy-change-only accuracy exists; the feature-removal experiment is explicitly labeled a persistence/configuration shortcut diagnostic.
+A transition audit checks scheduler, PRB and joint-action changes. If no within-episode policy changes are observed, the manuscript framing is **offline RAN configuration/policy selection**, not demonstrated dynamic closed-loop control.
 
-The proposed controller also receives a validation-tuned switching margin to reduce unnecessary policy churn.
+The proposed controller also uses a validation-tuned switching margin. `tradeoff_summary.json` reports utility-versus-churn/SLA trade-offs so a stable-policy contribution can be stated honestly even when scalar utility is not superior.
 
 ## Self-contained HTML report
 
@@ -63,50 +76,55 @@ The run creates:
 results/publication/report.html
 ```
 
-The HTML has no external JavaScript, CDN, font, or image dependency. It contains inline SVG figures for:
+The HTML has no external JavaScript, CDN, font, or image dependency. It contains inline SVG figures and tables for:
 
-- the full experimental architecture;
+- experiment role-swap architecture;
+- positivity/common-support evidence;
 - independent-OPE utility, SLA, energy, and churn comparisons;
 - cluster-level effect-size forest plot;
 - OOD behavior by scenario;
 - validation calibration;
 - transition/shortcut audit;
 - latency/runtime evidence;
-- readiness gates and claim restrictions.
+- readiness gates;
+- allowed manuscript claims and restrictions.
 
 ## Output files
 
 The final evidence directory includes:
 
 - `report.html` — self-contained visual publication report;
-- `publication_summary.json` — run status, manuscript-readiness gates, warnings, calibrated parameters;
+- `publication_summary.json` — run/evidence status, readiness gates, warnings, claim scope;
 - `publication_baselines.csv` — proposed / FQI / linear-CQL / HGB plus observed logged reference;
 - `publication_decisions.csv.gz` — row-level independent-OPE estimates and selected actions;
 - `clustered_statistics.json` — **primary** clustered inference;
-- `paired_statistics.json` — compatibility alias for the primary clustered statistics;
+- `paired_statistics.json` — compatibility alias for primary clustered statistics;
 - `episode_statistics_secondary.json` — secondary UE/episode sensitivity analysis;
-- `independent_ope_fit.json` — grouped cross-fit MAE/R² of the independent evaluator;
-- `partition.json` — policy-fit vs OPE-fit training configurations and action coverage;
-- `validation_calibration.csv` / `validation_selection.json` — controller validation search and selected setting;
-- `cql_validation.csv` — validation selection of CQL alpha;
+- `independent_ope_fit.json` — grouped cross-fit MAE/R² for each OPE experiment fold;
+- `partition.json` — experiment role-swap plus policy/OPE/common action support;
+- `tradeoff_summary.json` — utility delta, churn reduction, SLA delta, clustered effects;
+- `validation_calibration.csv` / `validation_selection.json`;
+- `cql_validation.csv`;
 - `ood_detection.json` / `ood_generalization.json` / `ood_threshold_sensitivity.csv`;
 - `transition_audit.csv`;
 - `policy_shortcut_test.csv`;
 - `latency_profile.json`;
 - `literature_reference.json` — published COMMAG PPO findings, reference only;
-- `publication_models.joblib`.
+- `publication_models.joblib` — fold-specific policy/OPE/FQI/CQL models.
 
 ## Status semantics
 
-`publication_summary.json` no longer sets `PUBLICATION-BENCHMARK-READY` just because the program finished. It separates:
+`publication_summary.json` separates:
 
 - `run_status: EXPERIMENT-COMPLETE`
 - `evidence_status: READY-FOR-MANUSCRIPT` or `REVIEW-REQUIRED`
 
-`evidence_status` is derived from explicit methodological gates such as disjoint policy/OPE fitting roles, independent-evaluator support, clustered inference, validation-only calibration, OOD evaluation, transition audit, and successful report generation.
+Readiness is based on methodology: experiment-disjoint roles, exactly-once test routing, validation isolation, finite evaluator metrics, non-trivial common support, evaluator support, clustered inference, OOD computation, transition audit, and successful report generation.
+
+Readiness does **not** require a favorable p-value or utility win. If the proposed method loses scalar utility, the report automatically restricts utility-superiority claims and points to the measured stability/churn trade-off instead.
 
 ## Counterfactual guardrail
 
-Only logged COMMAG outcomes are observed. Alternative selected-action outcomes remain offline direct-method/OPE estimates, not causal online intervention effects. Energy is a normalized proxy rather than measured joules. Host/container inference latency is not end-to-end RIC-to-gNB latency.
+Only logged COMMAG outcomes are observed. Alternative selected-action outcomes remain offline direct-method/OPE estimates on observed common support, not causal online intervention effects. Energy is a normalized proxy rather than measured joules. Host/container inference latency is not end-to-end RIC-to-gNB latency.
 
-See `docs/PUBLICATION_METHOD.md`, `docs/PUBLICATION_CHECKLIST.md`, and `docs/PAPER_REFERENCE_BASELINE.md` before using the generated evidence in a paper.
+See `docs/PUBLICATION_METHOD.md`, `docs/PUBLICATION_CHECKLIST.md`, and `docs/PAPER_REFERENCE_BASELINE.md` before using generated evidence in a manuscript.
