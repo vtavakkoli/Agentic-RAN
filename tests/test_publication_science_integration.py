@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 
 from agentic_ran.offline_policy import STATE_COLUMNS
-from agentic_ran.publication_science import FinalScienceConfig, run_final_benchmark
+from agentic_ran.publication_crossfit import run_crossfit_benchmark
+from agentic_ran.publication_science import FinalScienceConfig
 from agentic_ran.publication_v2 import PubConfig
 
 ACTIONS = [
@@ -56,7 +57,9 @@ def _rows_for_cell(
         episode = f"{scenario}/{training_config}/{experiment}/{base_station}/{slice_type}"
         for step, (action, next_scheduler, next_prb) in enumerate(ACTIONS):
             _, current_scheduler, current_prb = ACTIONS[(step + 1) % len(ACTIONS)]
-            offset = 0.005 * (slice_index + step + int(training_config.removeprefix("tr")) % 3)
+            offset = 0.005 * (
+                slice_index + step + int(training_config.removeprefix("tr")) % 3
+            )
             current = _state(slice_type, current_scheduler, current_prb, offset)
             following = _state(slice_type, next_scheduler, next_prb, offset + 0.01)
             row: dict[str, object] = {
@@ -74,7 +77,11 @@ def _rows_for_cell(
                 "done": step == len(ACTIONS) - 1,
                 "split": "train" if publication_split == "train" else "test",
                 "publication_split": publication_split,
-                "shift_type": "rf_distance_shift" if publication_split == "test_unseen" else "seen_condition",
+                "shift_type": (
+                    "rf_distance_shift"
+                    if publication_split == "test_unseen"
+                    else "seen_condition"
+                ),
             }
             row.update(current)
             row.update({f"next_{column}": following[column] for column in STATE_COLUMNS})
@@ -84,7 +91,6 @@ def _rows_for_cell(
 
 def _synthetic_publication_frame() -> pd.DataFrame:
     rows: list[dict[str, object]] = []
-    # Six training configurations are enough for a 2-config disjoint OPE split.
     for config in range(6):
         for experiment in ("exp1", "exp2"):
             rows.extend(
@@ -129,7 +135,7 @@ def _synthetic_publication_frame() -> pd.DataFrame:
     return frame
 
 
-def test_final_publication_pipeline_runs_end_to_end_on_synthetic_data(tmp_path: Path):
+def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(tmp_path: Path):
     data = tmp_path / "synthetic.csv.gz"
     output = tmp_path / "publication"
     _synthetic_publication_frame().to_csv(data, index=False, compression="gzip")
@@ -164,12 +170,12 @@ def test_final_publication_pipeline_runs_end_to_end_on_synthetic_data(tmp_path: 
         cql_tuning_epochs=3,
         bootstrap_samples=200,
         permutation_samples=200,
-        evaluator_support_gate=0.5,
+        evaluator_support_gate=0.95,
         latency_samples=1,
         random_seed=11,
     )
 
-    summary = run_final_benchmark(
+    summary = run_crossfit_benchmark(
         data,
         output,
         pub_cfg,
@@ -179,17 +185,22 @@ def test_final_publication_pipeline_runs_end_to_end_on_synthetic_data(tmp_path: 
     )
 
     assert summary["run_status"] == "EXPERIMENT-COMPLETE"
-    assert summary["evidence_status"] in {"READY-FOR-MANUSCRIPT", "REVIEW-REQUIRED"}
-    assert set(summary["partition"]["policy_fit_configs"]).isdisjoint(
-        summary["partition"]["ope_fit_configs"]
-    )
-    assert summary["calibrated_controller"]["switch_margin"] == 0.01
+    assert summary["partition"]["strategy"] == "experiment_role_swap_crossfit"
+    assert len(summary["partition"]["folds"]) == 2
+    for fold in summary["partition"]["folds"]:
+        assert fold["policy_fit_experiment"] not in fold["ope_fit_experiments"]
+        assert fold["common_policy_action_coverage"] == 1.0
+        assert fold["minimum_common_actions_per_slice"] >= 2
+    assert summary["readiness_gates"][
+        "proposed evaluator support >= 95% on seen test"
+    ]
+    assert summary["readiness_gates"][
+        "proposed evaluator support >= 95% on unseen test"
+    ]
     assert (output / "report.html").is_file()
-    assert (output / "publication_baselines.csv").is_file()
-    assert (output / "clustered_statistics.json").is_file()
-    assert (output / "independent_ope_fit.json").is_file()
-    assert (output / "transition_audit.csv").is_file()
-    assert (output / "validation_calibration.csv").is_file()
+    assert (output / "tradeoff_summary.json").is_file()
+    assert (output / "partition.json").is_file()
     report = (output / "report.html").read_text(encoding="utf-8")
-    assert "Independent-OPE utility" in report
-    assert "Readiness gates" in report
+    assert "Experiment cross-fit and positivity support" in report
+    assert "Allowed manuscript claims" in report
+    assert "experiment role-swap" in report
