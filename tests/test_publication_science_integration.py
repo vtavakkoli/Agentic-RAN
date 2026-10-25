@@ -200,6 +200,11 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(tmp_pat
     assert (output / "report.html").is_file()
     assert (output / "tradeoff_summary.json").is_file()
     assert (output / "partition.json").is_file()
+    assert (output / "publication_ablations.csv").is_file()
+    assert (output / "conditional_support.csv").is_file()
+    assert len(pd.read_csv(output / "publication_ablations.csv")) == 20
+    assert not pd.read_csv(output / "conditional_support.csv").empty
+    assert "state_conditional_overlap" in summary
     report = (output / "report.html").read_text(encoding="utf-8")
     assert "Experiment cross-fit and positivity support" in report
     assert "Allowed manuscript claims" in report
