@@ -209,7 +209,7 @@ def fit_fqi(train: pd.DataFrame, bundle: Any, cfg: PubConfig, seed: int) -> Extr
     # Bellman backups must respect the *same* slice-wise action mask as
     # action selection; otherwise an unavailable action inflates next-Q.
     supported_next = _support(bundle, train)
-    if not supported_next.all(axis=1).any() and not supported_next.any(axis=1).all():
+    if not supported_next.any(axis=1).all():
         raise ValueError("no supported next-state action for at least one FQI row")
     model: ExtraTreesRegressor | None = None
     for iteration in range(cfg.fqi_iterations):
