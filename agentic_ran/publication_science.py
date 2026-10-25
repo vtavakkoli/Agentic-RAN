@@ -491,8 +491,13 @@ def _choose_from_precomputed(
         selected_idx[hold] = current_idx[hold]
         reason[hold] = "hysteresis"
     selected = np.asarray(bundle.actions, dtype=object)[selected_idx]
+    replay_pairs = (
+        pre["temporal_pairs"]
+        if "temporal_pairs" in pre
+        else _temporal_pairs(targets)
+    )
     replay_flags, replay_rate, replay_transitions = _replay_switches(
-        selected, pre["temporal_pairs"]
+        selected, replay_pairs
     )
     return pd.DataFrame(
         {
