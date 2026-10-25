@@ -206,6 +206,11 @@ def fit_fqi(train: pd.DataFrame, bundle: Any, cfg: PubConfig, seed: int) -> Extr
     reward = train._utility_reward.to_numpy(float)
     done = train.done.astype(bool).to_numpy()
     target = reward.copy()
+    # Bellman backups must respect the *same* slice-wise action mask as
+    # action selection; otherwise an unavailable action inflates next-Q.
+    supported_next = _support(bundle, train)
+    if not supported_next.all(axis=1).any() and not supported_next.any(axis=1).all():
+        raise ValueError("no supported next-state action for at least one FQI row")
     model: ExtraTreesRegressor | None = None
     for iteration in range(cfg.fqi_iterations):
         model = ExtraTreesRegressor(
@@ -218,6 +223,7 @@ def fit_fqi(train: pd.DataFrame, bundle: Any, cfg: PubConfig, seed: int) -> Extr
         next_q = np.column_stack(
             [model.predict(_candidate_matrix(train, bundle.actions, action, prefix="next_")) for action in bundle.actions]
         )
+        next_q = np.where(supported_next, next_q, -np.inf)
         target = reward + cfg.gamma * (~done).astype(float) * np.max(next_q, axis=1)
     assert model is not None
     return model
@@ -250,6 +256,9 @@ def fit_cql(train: pd.DataFrame, bundle: Any, cfg: PubConfig, seed: int) -> Line
     index = {action: i for i, action in enumerate(bundle.actions)}
     logged = np.array([index[str(action)] for action in train.action])
     one_hot = np.eye(k)[logged]
+    supported = _support(bundle, train)
+    if not supported.any(axis=1).all():
+        raise ValueError("no supported Bellman action for at least one CQL row")
     reward = train._utility_reward.to_numpy(float)
     done = train.done.astype(bool).to_numpy()
     w = rng.normal(0, 0.01, (k, d))
@@ -261,10 +270,13 @@ def fit_cql(train: pd.DataFrame, bundle: Any, cfg: PubConfig, seed: int) -> Line
     beta1, beta2 = 0.9, 0.999
     for step in range(1, cfg.cql_epochs + 1):
         q = x @ w.T + b
-        next_q = xn @ w.T + b
+        next_q = np.where(supported, xn @ w.T + b, -np.inf)
         target = reward + cfg.gamma * (~done).astype(float) * np.max(next_q, 1)
         residual = q[np.arange(n), logged] - target
-        shifted = q - q.max(1, keepdims=True)
+        # Restrict the conservative log-sum-exp to actions that can be
+        # selected for this slice, just like FQI and the proposed policy.
+        masked_q = np.where(supported, q, -np.inf)
+        shifted = masked_q - masked_q.max(1, keepdims=True)
         softmax = np.exp(shifted)
         softmax /= softmax.sum(1, keepdims=True)
         grad_q = 2 * residual[:, None] * one_hot / n + cfg.cql_alpha * (softmax - one_hot) / n
