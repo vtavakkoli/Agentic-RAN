@@ -38,6 +38,7 @@ from agentic_ran.publication_science import (
     calibrate_controller,
 )
 from agentic_ran.publication_v2 import PubConfig, fit_cql, fit_fqi, shortcut
+from agentic_ran.publication_support import StateConditionalSupportAudit
 
 COMMON_SUPPORT_GATE = 0.80
 MIN_COMMON_ACTIONS_PER_SLICE = 2
@@ -194,6 +195,8 @@ def _aggregate_baselines(fold_rows: list[pd.DataFrame]) -> pd.DataFrame:
         "selected_ope_mean_energy_proxy",
         "selected_ope_mean_stability_cost",
         "policy_churn_rate",
+        "logged_action_disagreement_rate",
+        "replay_transition_count",
         "evaluator_support_rate",
         "rollback_rate",
         "ood_fallback_rate",
@@ -212,9 +215,17 @@ def _aggregate_baselines(fold_rows: list[pd.DataFrame]) -> pd.DataFrame:
                 continue
             values = pd.to_numeric(group[metric], errors="coerce").to_numpy(dtype=float)
             finite = np.isfinite(values)
+            metric_weights = (
+                pd.to_numeric(
+                    group["replay_transition_count"], errors="coerce"
+                ).to_numpy(dtype=float)
+                if metric == "policy_churn_rate"
+                else weights
+            )
+            eligible = finite & np.isfinite(metric_weights) & (metric_weights > 0)
             row[metric] = (
-                float(np.average(values[finite], weights=weights[finite]))
-                if finite.any()
+                float(np.average(values[eligible], weights=metric_weights[eligible]))
+                if eligible.any()
                 else np.nan
             )
         rows.append(row)
@@ -319,6 +330,8 @@ def run_crossfit_benchmark(
     model_folds: dict[str, Any] = {}
     latency_items: list[tuple[str, dict[str, Any]]] = []
     fold_metadata: list[dict[str, Any]] = []
+    ablation_rows: list[dict[str, Any]] = []
+    state_overlap_rows: list[dict[str, Any]] = []
 
     for fold_index, base_fold in enumerate(plan["folds"]):
         fold = dict(base_fold)
@@ -346,6 +359,10 @@ def run_crossfit_benchmark(
             bundle, policy_fit, ope_fit
         )
         fold.update(support_audit)
+        # This local kNN audit is deliberately separate from the action-only
+        # common support mask. It diagnoses, but cannot prove, conditional
+        # counterfactual overlap or causal identifiability.
+        local_overlap = StateConditionalSupportAudit(policy_fit, ope_fit)
 
         evaluator = fit_independent_ope(
             ope_fit,
@@ -387,6 +404,7 @@ def run_crossfit_benchmark(
         )
 
         for split_name, test in (("seen", seen_fold), ("unseen", unseen_fold)):
+            fold_ablations: list[dict[str, Any]] = []
             summary_table, details, combined = _evaluate_split(
                 split_name,
                 test,
@@ -396,7 +414,18 @@ def run_crossfit_benchmark(
                 switch_margin,
                 fqi,
                 cql,
+                ablation_sink=fold_ablations,
             )
+            for row in fold_ablations:
+                row["crossfit_fold"] = fold_name
+            ablation_rows.extend(fold_ablations)
+            state_overlap_rows.extend(local_overlap.audit(
+                test,
+                {method: item["selected_action"].to_numpy()
+                 for method, item in details.items()},
+                split=split_name,
+                fold=fold_name,
+            ))
             summary_table["fold_rows"] = len(test)
             summary_table["crossfit_fold"] = fold_name
             summary_table["policy_fit_experiment"] = policy_experiment
@@ -434,6 +463,18 @@ def run_crossfit_benchmark(
 
     baselines = _aggregate_baselines(fold_baselines)
     decisions = pd.concat(decision_tables, ignore_index=True)
+    ablations = pd.DataFrame(ablation_rows)
+    state_overlap = pd.DataFrame(state_overlap_rows)
+    overlap_summary = {}
+    for (split, method), group in state_overlap.groupby(["split", "method"]):
+        weights = group["sampled_rows"].to_numpy(float)
+        overlap_summary[f"{split}:{method}"] = {
+            "sampled_rows": int(weights.sum()),
+            "joint_local_overlap": float(np.average(
+                group["joint_local_overlap"].to_numpy(float), weights=weights
+            )),
+            "limitation": "sampled kNN state overlap proxy, not causal identification",
+        }
     details = {
         split: {
             model: pd.concat(parts, ignore_index=True)
@@ -535,6 +576,9 @@ def run_crossfit_benchmark(
             not item["test_data_used_for_calibration"]
             for item in calibration_selection.values()
         ),
+        "validation policy satisfies feasibility constraints": all(
+            item["constraint_feasible"] for item in calibration_selection.values()
+        ),
         "independent OPE cross-fit metrics are finite": fit_finite,
         f"common support retains >= {COMMON_SUPPORT_GATE:.0%} of policy action cells": (
             min_common_coverage >= COMMON_SUPPORT_GATE
@@ -562,7 +606,19 @@ def run_crossfit_benchmark(
         "dynamic_control": "not established by the current COMMAG transition evidence",
         "ood": "secondary diagnostic",
         "latency": "host/container inference only; not RIC-to-gNB latency",
+        "churn": "open-loop selected-action changes across consecutive logged states, not realized actuation",
+        "support": "slice-level action overlap plus a sampled state-conditional diagnostic; no causal guarantee",
     }
+    if any(
+        summary["joint_local_overlap"] < 0.5
+        for key, summary in overlap_summary.items()
+        if key.endswith(":proposed")
+    ):
+        warnings.append(
+            "Sampled state-conditional overlap is below 50% in at least one "
+            "test split. Action-set support alone cannot validate direct-method "
+            "counterfactual policy comparisons."
+        )
     if not audit_summary["within_episode_change_evidence_available"]:
         warnings.append(
             "No within-episode joint scheduler+PRB action changes were observed; "
@@ -616,6 +672,8 @@ def run_crossfit_benchmark(
         "warnings": warnings,
         "claim_scope": claim_scope,
         "tradeoff_summary": tradeoffs,
+        "state_conditional_overlap": overlap_summary,
+        "ablation_variants": sorted(set(ablations["variant"])),
         "clustered_statistics": clustered,
         "ood_detection": ood_detection,
         "transition_audit": audit_summary,
@@ -633,6 +691,8 @@ def run_crossfit_benchmark(
     calibration = pd.concat(calibration_tables, ignore_index=True)
     cql_validation = pd.concat(cql_tables, ignore_index=True)
     baselines.to_csv(destination / "publication_baselines.csv", index=False)
+    ablations.to_csv(destination / "publication_ablations.csv", index=False)
+    state_overlap.to_csv(destination / "conditional_support.csv", index=False)
     decisions.to_csv(
         destination / "publication_decisions.csv.gz",
         index=False,
