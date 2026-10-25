@@ -389,6 +389,10 @@ def _observed_logged_summary(
     study_config: StudyConfig,
 ) -> dict[str, Any]:
     targets = _derive_targets(frame, evaluator.energy_scale, study_config)
+    logged_actions = targets["action"].astype(str).to_numpy()
+    _, replay_rate, replay_transitions = _replay_switches(
+        logged_actions, _temporal_pairs(targets)
+    )
     return {
         "model": "logged_observed",
         "estimate_type": "observed_logged_outcome",
@@ -396,8 +400,10 @@ def _observed_logged_summary(
         "selected_ope_sla_violation_rate": float(np.mean(targets["_sla_cost"] > study_config.sla_threshold)),
         "selected_ope_mean_energy_proxy": float(targets["_energy_cost"].mean()),
         "selected_ope_mean_stability_cost": float(targets["_stability_cost"].mean()),
-        "policy_churn_rate": float(
-            np.mean(_current_actions(targets) != targets["action"].astype(str).to_numpy())
+        "policy_churn_rate": replay_rate,
+        "replay_transition_count": replay_transitions,
+        "logged_action_disagreement_rate": float(
+            np.mean(_current_actions(targets) != logged_actions)
         ),
         "evaluator_support_rate": 1.0,
     }
