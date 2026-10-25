@@ -96,7 +96,17 @@ def test_value_baselines_respect_slice_mask_in_bellman_backup():
         actions=["A", "B"],
         actions_by_slice={"eMBB": {"A"}},
     )
-    config = PubConfig(fqi_iterations=2, cql_epochs=3)
+    config = PubConfig(
+        train_configs=(0, 1),
+        validation_configs=(2,),
+        test_configs=(3,),
+        train_scenarios=("rome_static_close",),
+        unseen_scenarios=("rome_static_far",),
+        base_stations=(1,),
+        experiments=(1, 2),
+        fqi_iterations=2,
+        cql_epochs=3,
+    )
     fqi = fit_fqi(train, bundle, config, seed=3)
     assert np.isfinite(fqi.predict(
         __import__("agentic_ran.offline_policy", fromlist=["_candidate_matrix"])
