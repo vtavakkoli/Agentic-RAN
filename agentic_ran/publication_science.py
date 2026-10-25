@@ -269,6 +269,42 @@ def _action_indices(actions: Sequence[str], action_list: Sequence[str]) -> np.nd
         raise ValueError(f"action outside policy action space: {exc}") from exc
 
 
+
+def _temporal_pairs(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Indices of consecutive *logged-state* rows within the same UE episode.
+
+    This permits an open-loop replay switching diagnostic. It is NOT actual
+    switching following interventions: each next state remains logged data.
+    """
+    size = len(frame)
+    empty = np.empty(0, dtype=int)
+    if size < 2:
+        return empty, empty
+    episode = frame["episode_id"].astype(str).to_numpy()
+    time_values = (
+        pd.to_numeric(frame["timestamp_s"], errors="coerce").fillna(-1).to_numpy()
+        if "timestamp_s" in frame
+        else np.arange(size)
+    )
+    order = np.lexsort((np.arange(size), time_values, episode))
+    before, after = order[:-1], order[1:]
+    within = episode[before] == episode[after]
+    return before[within], after[within]
+
+
+def _replay_switches(
+    selected_actions: Sequence[str], pairs: tuple[np.ndarray, np.ndarray]
+) -> tuple[np.ndarray, float, int]:
+    """Switch flags and rate divided by eligible transitions (not row count)."""
+    actions = np.asarray(selected_actions, dtype=object)
+    before, after = pairs
+    switches = np.zeros(len(actions), dtype=bool)
+    if len(after):
+        switches[after] = actions[after] != actions[before]
+    rate = float(switches.sum() / len(after)) if len(after) else 0.0
+    return switches, rate, int(len(after))
+
+
 def _score_from_predictions(
     evaluator: IndependentOPE,
     frame: pd.DataFrame,
@@ -293,6 +329,10 @@ def _score_from_predictions(
         + study_config.stability_weight * stability
     ) / max(denom, 1e-9)
     current = _current_actions(frame)
+    disagreement = selected != current
+    switches, replay_rate, transition_count = _replay_switches(
+        selected, _temporal_pairs(frame)
+    )
     evaluator_supported = evaluator.supported(frame, selected)
     detail = pd.DataFrame(
         {
@@ -302,13 +342,19 @@ def _score_from_predictions(
             "experiment": frame["experiment"].astype(str).to_numpy(),
             "base_station": frame["base_station"].astype(str).to_numpy(),
             "model": name,
+            "timestamp_s": (
+                frame["timestamp_s"].to_numpy()
+                if "timestamp_s" in frame
+                else np.arange(len(frame))
+            ),
             "selected_action": selected,
             "utility": utility,
             "sla_cost": sla,
             "sla_violation": sla > study_config.sla_threshold,
             "energy": energy,
             "stability": stability,
-            "policy_churn": selected != current,
+            "policy_churn": switches,
+            "logged_action_disagreement": disagreement,
             "evaluator_supported": evaluator_supported,
         }
     )
@@ -324,7 +370,12 @@ def _score_from_predictions(
         "selected_ope_sla_violation_rate": float(np.mean(sla > study_config.sla_threshold)),
         "selected_ope_mean_energy_proxy": float(np.mean(energy)),
         "selected_ope_mean_stability_cost": float(np.mean(stability)),
-        "policy_churn_rate": float(np.mean(selected != current)),
+        # Historical results called disagreement with a *logged* action
+        # "churn". That metric is preserved separately, while churn now
+        # counts consecutive candidate changes in an open-loop state replay.
+        "policy_churn_rate": replay_rate,
+        "replay_transition_count": transition_count,
+        "logged_action_disagreement_rate": float(np.mean(disagreement)),
         "evaluator_support_rate": float(np.mean(evaluator_supported)),
     }
     if rollback is not None:
@@ -338,6 +389,10 @@ def _observed_logged_summary(
     study_config: StudyConfig,
 ) -> dict[str, Any]:
     targets = _derive_targets(frame, evaluator.energy_scale, study_config)
+    logged_actions = targets["action"].astype(str).to_numpy()
+    _, replay_rate, replay_transitions = _replay_switches(
+        logged_actions, _temporal_pairs(targets)
+    )
     return {
         "model": "logged_observed",
         "estimate_type": "observed_logged_outcome",
@@ -345,8 +400,10 @@ def _observed_logged_summary(
         "selected_ope_sla_violation_rate": float(np.mean(targets["_sla_cost"] > study_config.sla_threshold)),
         "selected_ope_mean_energy_proxy": float(targets["_energy_cost"].mean()),
         "selected_ope_mean_stability_cost": float(targets["_stability_cost"].mean()),
-        "policy_churn_rate": float(
-            np.mean(_current_actions(targets) != targets["action"].astype(str).to_numpy())
+        "policy_churn_rate": replay_rate,
+        "replay_transition_count": replay_transitions,
+        "logged_action_disagreement_rate": float(
+            np.mean(_current_actions(targets) != logged_actions)
         ),
         "evaluator_support_rate": 1.0,
     }
@@ -363,6 +420,7 @@ def _policy_precompute(bundle: Any, frame: pd.DataFrame) -> dict[str, Any]:
         "q_norm": _normalize_q(predictions["q"], allowed),
         "ood": _ood_scores(bundle, targets),
         "current": _current_actions(targets),
+        "temporal_pairs": _temporal_pairs(targets),
     }
 
 
@@ -371,6 +429,11 @@ def _choose_from_precomputed(
     pre: dict[str, Any],
     config: StudyConfig,
     switch_margin: float,
+    *,
+    disable_safety: bool = False,
+    disable_ood: bool = False,
+    disable_uncertainty: bool = False,
+    disable_hysteresis: bool = False,
 ) -> pd.DataFrame:
     predictions = pre["predictions"]
     allowed = pre["allowed"]
@@ -378,16 +441,21 @@ def _choose_from_precomputed(
     ood = pre["ood"]
     current = pre["current"]
     targets = pre["targets"]
+    uncertainty_weight = 0.0 if disable_uncertainty else config.uncertainty_weight
     score = 1.0 - (
         config.sla_weight * predictions["sla"]
         + config.energy_weight * predictions["energy"]
         + config.stability_weight * predictions["stability"]
-        + config.uncertainty_weight * predictions["uncertainty"]
-    ) / max(config.immediate_weight_sum, 1e-9)
+        + uncertainty_weight * predictions["uncertainty"]
+    ) / max(
+        config.sla_weight + config.energy_weight + config.stability_weight
+        + uncertainty_weight, 1e-9
+    )
     score = score + config.planning_weight * q_norm
     score = np.where(allowed, score, -np.inf)
-    safe = allowed & (predictions["sla"] <= config.sla_threshold) & (
-        predictions["uncertainty"] <= config.uncertainty_threshold
+    safe = allowed.copy() if disable_safety else (
+        allowed & (predictions["sla"] <= config.sla_threshold)
+        & (predictions["uncertainty"] <= config.uncertainty_threshold)
     )
     safe_score = np.where(safe, score, -np.inf)
     has_safe = np.any(safe, axis=1)
@@ -402,14 +470,20 @@ def _choose_from_precomputed(
             fallback_idx[row] = current_idx[row]
         else:
             fallback_idx[row] = action_index[bundle.fallback_by_slice[str(slice_type)]]
-    ood_fallback = ood > config.ood_threshold
+    ood_fallback = (
+        np.zeros(len(ood), dtype=bool)
+        if disable_ood else ood > config.ood_threshold
+    )
     safety_fallback = ~has_safe
     rollback = ood_fallback | safety_fallback
     selected_idx[rollback] = fallback_idx[rollback]
     reason = np.full(len(targets), "", dtype=object)
     reason[ood_fallback] = "ood"
     reason[safety_fallback & ~ood_fallback] = "safety"
-    can_hysteresis = (~rollback) & (current_idx >= 0) & (selected_idx != current_idx)
+    can_hysteresis = (
+        (~rollback) & (current_idx >= 0) & (selected_idx != current_idx)
+        & (not disable_hysteresis)
+    )
     positions = np.flatnonzero(can_hysteresis)
     if len(positions):
         improvement = score[positions, selected_idx[positions]] - score[positions, current_idx[positions]]
@@ -417,13 +491,24 @@ def _choose_from_precomputed(
         selected_idx[hold] = current_idx[hold]
         reason[hold] = "hysteresis"
     selected = np.asarray(bundle.actions, dtype=object)[selected_idx]
+    replay_pairs = (
+        pre["temporal_pairs"]
+        if "temporal_pairs" in pre
+        else _temporal_pairs(targets)
+    )
+    replay_flags, replay_rate, replay_transitions = _replay_switches(
+        selected, replay_pairs
+    )
     return pd.DataFrame(
         {
             "selected_action": selected,
             "rollback": rollback,
             "fallback_reason": reason,
             "ood_score": ood,
-            "policy_churn": selected != current,
+            "policy_churn": replay_flags,
+            "logged_action_disagreement": selected != current,
+            "replay_switch_rate": replay_rate,
+            "replay_transition_count": replay_transitions,
         },
         index=targets.index,
     )
@@ -465,7 +550,7 @@ def calibrate_controller(
                         + candidate.energy_weight * energy
                         + candidate.stability_weight * stability
                     ) / max(denom, 1e-9)
-                    churn = float(decisions["policy_churn"].mean())
+                    churn = float(decisions["replay_switch_rate"].iloc[0])
                     rollback = float(decisions["rollback"].mean())
                     ref_sla_violation = float(np.mean(sla > science.reference_sla_threshold))
                     support = float(evaluator.supported(validation, decisions["selected_action"]).mean())
@@ -496,7 +581,11 @@ def calibrate_controller(
     feasible = table[
         table["feasible"] & (table["evaluator_support_rate"] >= science.evaluator_support_gate)
     ]
-    pool = feasible if not feasible.empty else table
+    # Preserve historical fallback for reproducibility but disclose when
+    # every validated policy violates the stated feasibility constraint.
+    # The publication readiness gate must reject such a calibration.
+    constraints_satisfied = not feasible.empty
+    pool = feasible if constraints_satisfied else table
     selected = pool.sort_values(
         ["calibration_score", "validation_reference_sla_violation", "validation_churn"],
         ascending=[False, True, True],
@@ -518,6 +607,7 @@ def calibrate_controller(
             f"seen-validation quantile at target FPR={science.target_validation_ood_fpr}"
         ),
         "test_data_used_for_calibration": False,
+        "constraint_feasible": bool(constraints_satisfied),
     }
     return (
         calibrated,
@@ -879,9 +969,14 @@ def _evaluate_split(
     switch_margin: float,
     fqi: Any,
     cql: Any,
+    *,
+    ablation_sink: list[dict[str, Any]] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame], pd.DataFrame]:
     evaluator_predictions = evaluator.predict_all(frame)
-    proposed_decisions = _proposed_decisions(bundle, frame, calibrated, switch_margin)
+    precomputed = _policy_precompute(bundle, frame)
+    proposed_decisions = _choose_from_precomputed(
+        bundle, precomputed, calibrated, switch_margin
+    )
     proposed_summary, proposed_detail = _score_from_predictions(
         evaluator,
         frame,
@@ -926,6 +1021,29 @@ def _evaluate_split(
         summaries.append(summary)
         details[model_name] = detail
     summaries.append(_observed_logged_summary(frame, evaluator, calibrated))
+    if ablation_sink is not None:
+        ablation_sink.append({
+            "split": name,
+            "variant": "full",
+            **proposed_summary,
+        })
+        for variant, changes in (
+            ("without_safety_gate", {"disable_safety": True}),
+            ("without_ood_gate", {"disable_ood": True}),
+            ("without_uncertainty_term", {"disable_uncertainty": True}),
+            ("without_hysteresis", {"disable_hysteresis": True}),
+        ):
+            decisions = _choose_from_precomputed(
+                bundle, precomputed, calibrated, switch_margin, **changes
+            )
+            summary, _ = _score_from_predictions(
+                evaluator, frame, decisions["selected_action"],
+                evaluator_predictions, calibrated, variant,
+                rollback=decisions["rollback"],
+            )
+            ablation_sink.append({
+                "split": name, "variant": variant, **summary,
+            })
     summary_table = pd.DataFrame(summaries)
     summary_table.insert(0, "split", name)
     combined = pd.concat(details.values(), ignore_index=True)

@@ -316,6 +316,14 @@ results/report.html        generated readiness report
 
 ## Research positioning
 
+**Publication-methodology caveat:** the latest evaluation code distinguishes
+open-loop replay switching from disagreement with logged actions, adds sampled
+state-conditional overlap analysis and component ablations. These checks
+strengthen the offline evidence but are not live intervention validation.
+See [the methodology audit](docs/METHODOLOGY_AUDIT.md) and
+[the publication workflow](README.publication.md). Do not treat pre-audit
+manuscript switching values as revised results.
+
 The flagship question is not "which classifier predicts policy labels best?" It is:
 
 > **Can a safety-governed agentic controller improve heterogeneous RAN utility while maintaining explicit SLA and safety constraints under disturbances, uncertainty and distribution shift?**

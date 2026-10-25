@@ -16,6 +16,13 @@ prepare-full-commag -> publication-test
 
 ## Scientific protocol
 
+> **Methodology update:** Read [the methodology audit](docs/METHODOLOGY_AUDIT.md)
+> before quoting the previous manuscript's switching results. The historical
+> "churn" value was action disagreement with the logged configuration. The
+> revised pipeline computes sequential open-loop replay switching separately,
+> audits sampled state-conditional overlap, and reports controller ablations.
+> Prior numerical claims require a full rerun and manuscript revision.
+
 The prepared COMMAG table retains the fixed condition split:
 
 - `tr0`–`tr11`: training pool on `rome_static_close` and `rome_static_medium`;
@@ -102,7 +109,9 @@ The final evidence directory includes:
 - `episode_statistics_secondary.json` — secondary UE/episode sensitivity analysis;
 - `independent_ope_fit.json` — grouped cross-fit MAE/R² for each OPE experiment fold;
 - `partition.json` — experiment role-swap plus policy/OPE/common action support;
-- `tradeoff_summary.json` — utility delta, churn reduction, SLA delta, clustered effects;
+- `tradeoff_summary.json` — utility delta, **open-loop replay switching** delta, SLA delta, clustered effects;
+- `publication_ablations.csv` — independent-OPE results for full policy and four component ablations;
+- `conditional_support.csv` — sampled two-role per-slice/action local-overlap diagnostics (not causal evidence);
 - `validation_calibration.csv` / `validation_selection.json`;
 - `cql_validation.csv`;
 - `ood_detection.json` / `ood_generalization.json` / `ood_threshold_sensitivity.csv`;
