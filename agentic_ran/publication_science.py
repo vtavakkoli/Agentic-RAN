@@ -486,7 +486,7 @@ def _choose_from_precomputed(
         reason[hold] = "hysteresis"
     selected = np.asarray(bundle.actions, dtype=object)[selected_idx]
     replay_flags, replay_rate, replay_transitions = _replay_switches(
-        selected, pre.get("temporal_pairs", _temporal_pairs(targets))
+        selected, pre["temporal_pairs"]
     )
     return pd.DataFrame(
         {
@@ -958,9 +958,14 @@ def _evaluate_split(
     switch_margin: float,
     fqi: Any,
     cql: Any,
+    *,
+    ablation_sink: list[dict[str, Any]] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame], pd.DataFrame]:
     evaluator_predictions = evaluator.predict_all(frame)
-    proposed_decisions = _proposed_decisions(bundle, frame, calibrated, switch_margin)
+    precomputed = _policy_precompute(bundle, frame)
+    proposed_decisions = _choose_from_precomputed(
+        bundle, precomputed, calibrated, switch_margin
+    )
     proposed_summary, proposed_detail = _score_from_predictions(
         evaluator,
         frame,
@@ -1005,6 +1010,29 @@ def _evaluate_split(
         summaries.append(summary)
         details[model_name] = detail
     summaries.append(_observed_logged_summary(frame, evaluator, calibrated))
+    if ablation_sink is not None:
+        ablation_sink.append({
+            "split": name,
+            "variant": "full",
+            **proposed_summary,
+        })
+        for variant, changes in (
+            ("without_safety_gate", {"disable_safety": True}),
+            ("without_ood_gate", {"disable_ood": True}),
+            ("without_uncertainty_term", {"disable_uncertainty": True}),
+            ("without_hysteresis", {"disable_hysteresis": True}),
+        ):
+            decisions = _choose_from_precomputed(
+                bundle, precomputed, calibrated, switch_margin, **changes
+            )
+            summary, _ = _score_from_predictions(
+                evaluator, frame, decisions["selected_action"],
+                evaluator_predictions, calibrated, variant,
+                rollback=decisions["rollback"],
+            )
+            ablation_sink.append({
+                "split": name, "variant": variant, **summary,
+            })
     summary_table = pd.DataFrame(summaries)
     summary_table.insert(0, "split", name)
     combined = pd.concat(details.values(), ignore_index=True)
