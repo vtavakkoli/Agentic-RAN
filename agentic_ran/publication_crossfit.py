@@ -282,8 +282,18 @@ def _tradeoff_summary(
                     proposed["selected_ope_mean_utility"]
                     - other["selected_ope_mean_utility"]
                 ),
+                # Keep the legacy key for downstream consumers, but add
+                # explicit semantic names so replay switching cannot be
+                # confused with disagreement with the original log.
                 "churn_reduction_absolute": float(
                     other["policy_churn_rate"] - proposed["policy_churn_rate"]
+                ),
+                "open_loop_replay_switch_reduction_absolute": float(
+                    other["policy_churn_rate"] - proposed["policy_churn_rate"]
+                ),
+                "logged_action_disagreement_reduction_absolute": float(
+                    other["logged_action_disagreement_rate"]
+                    - proposed["logged_action_disagreement_rate"]
                 ),
                 "sla_violation_delta": float(
                     proposed["selected_ope_sla_violation_rate"]
