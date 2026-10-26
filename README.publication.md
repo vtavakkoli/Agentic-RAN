@@ -30,6 +30,7 @@ tables), explicitly opt in:
 
 ```bash
 AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD=1 \
+AGENTIC_RAN_EVAL_MATCHED_WRAPPERS=1 \
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
 docker compose -f docker-compose.publication.yml up --build --force-recreate publication-test
 ```
