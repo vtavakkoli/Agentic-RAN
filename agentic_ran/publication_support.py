@@ -206,8 +206,9 @@ class StateConditionalSupportAudit:
         """
         if len(incumbent_actions) != len(frame):
             raise ValueError("incumbent_actions length must equal frame length")
-        proposed = np.asarray(selected_actions, dtype=str)
-        incumbent = np.asarray(incumbent_actions, dtype=str)
+        # Object dtype prevents truncating longer fallback action names.
+        proposed = np.asarray(selected_actions, dtype=object)
+        incumbent = np.asarray(incumbent_actions, dtype=object)
         local_ok = self.candidate_supported(
             frame, proposed, batch_size=batch_size
         )
