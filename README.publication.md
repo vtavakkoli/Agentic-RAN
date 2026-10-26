@@ -35,6 +35,14 @@ LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
 docker compose -f docker-compose.publication.yml up --build --force-recreate publication-test
 ```
 
+With `AGENTIC_RAN_EVAL_MATCHED_WRAPPERS=1`, the same run also adds
+`fqi_matched`, `cql_linear_matched`, and `behavior_hgb_matched`. Their
+original action proposals are retained but subjected to the **same**
+SLA/uncertainty, OOD, fallback and hysteresis rules as the proposed controller.
+These are deliberately new *wrapped* baselines; the original unwrapped
+FQI/CQL/HGB results remain unchanged. They do not make the underlying
+counterfactual outcomes causal.
+
 The pipeline then exports a distinct `support_guarded` model in
 `publication_baselines.csv` and `publication_decisions.csv.gz`, publishes
 full-row support deferral and fallback fractions, and computes a paired,
