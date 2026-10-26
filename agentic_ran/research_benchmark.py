@@ -86,13 +86,12 @@ def evaluate_support(seed=2026, train_per_role=3000, validation=850, test=1400):
         allowed = np.ones(scores.shape, dtype=bool)
         results = {}
         for method in methods:
-            p = np.column_stack([
-                estimator.pvalues(x, slices, name, method)
-                for name in ACTION_NAMES
-            ])
             for alpha in alphas:
+                local_support = estimator.action_support(
+                    x, slices, ACTION_NAMES, method, alpha
+                )
                 choice = rerank(
-                    scores, upper, uncertainty, allowed, p > alpha,
+                    scores, upper, uncertainty, allowed, local_support,
                     logged, method=method, alpha=alpha, switch_cost=0.01,
                 )
                 active = ~choice.abstain
@@ -104,7 +103,7 @@ def evaluate_support(seed=2026, train_per_role=3000, validation=850, test=1400):
                 # proposal; re-ranking searches remaining safe candidates.
                 legacy_top = np.argmax(scores, axis=1)
                 legacy_ok = (
-                    (p > alpha) & (upper <= 0.45)
+                    local_support & (upper <= 0.45)
                     & (uncertainty <= 0.5)
                 )[np.arange(len(x)), legacy_top]
                 legacy_vals = np.full(len(x), -0.12)
