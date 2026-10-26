@@ -14,6 +14,45 @@ Dependency chain:
 prepare-full-commag -> publication-test
 ```
 
+## Experimental dual-role support-gated controller
+
+The optional support-guarded variant combines the existing uncertainty/SLA-gated
+controller with a **second, state-conditional action support gate**. For each
+proposed scheduler–PRB action it queries training-only kNN envelopes fitted
+independently in the policy-fit and OPE-fit experiment roles. If either role
+lacks local evidence it abstains: retain the incumbent if it remains within
+the common slice action set; otherwise use the configured fallback. Deferral
+is a conservative *offline selection decision*, not evidence that any
+fallback action is safe to execute on a RAN.
+
+To evaluate it on the **full publication dataset** (not just saved summary
+tables), explicitly opt in:
+
+```bash
+AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD=1 \
+AGENTIC_RAN_EVAL_MATCHED_WRAPPERS=1 \
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+docker compose -f docker-compose.publication.yml up --build --force-recreate publication-test
+```
+
+With `AGENTIC_RAN_EVAL_MATCHED_WRAPPERS=1`, the same run also adds
+`fqi_matched`, `cql_linear_matched`, and `behavior_hgb_matched`. Their
+original action proposals are retained but subjected to the **same**
+SLA/uncertainty, OOD, fallback and hysteresis rules as the proposed controller.
+These are deliberately new *wrapped* baselines; the original unwrapped
+FQI/CQL/HGB results remain unchanged. They do not make the underlying
+counterfactual outcomes causal.
+
+The pipeline then exports a distinct `support_guarded` model in
+`publication_baselines.csv` and `publication_decisions.csv.gz`, publishes
+full-row support deferral and fallback fractions, and computes a paired,
+cluster-bootstrap comparison against the unguarded proposed controller. The
+base method is unchanged when the environment variable is unset. This is an
+experimental ablation; **no performance gain is implied until the rerun**.
+The local-support radius is fitted only from the respective training roles;
+the independent OPE predictions are **never** fed into action selection.
+The guard cannot establish causal support or closed-loop safety.
+
 ## Scientific protocol
 
 > **Methodology update:** Read [the methodology audit](docs/METHODOLOGY_AUDIT.md)

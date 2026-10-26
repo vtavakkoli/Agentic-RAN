@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -200,6 +201,8 @@ def _aggregate_baselines(fold_rows: list[pd.DataFrame]) -> pd.DataFrame:
         "evaluator_support_rate",
         "rollback_rate",
         "ood_fallback_rate",
+        "support_deferral_rate",
+        "unsupported_incumbent_fallback_rate",
     ]
     rows: list[dict[str, Any]] = []
     for (split, model), group in table.groupby(["split", "model"], sort=False):
@@ -273,7 +276,10 @@ def _tradeoff_summary(
             continue
         proposed = local.loc["proposed"]
         result[split] = {}
-        for baseline in ("fqi", "cql_linear", "behavior_hgb"):
+        for baseline in (
+            "fqi", "cql_linear", "behavior_hgb",
+            "fqi_matched", "cql_linear_matched", "behavior_hgb_matched",
+        ):
             if baseline not in local.index:
                 continue
             other = local.loc[baseline]
@@ -327,10 +333,24 @@ def run_crossfit_benchmark(
         raise ValueError("all train/validation/seen/unseen splits must be non-empty")
 
     plan = experiment_crossfit_plan(train)
+    # Opt in explicitly; the original publication comparison stays unchanged.
+    experimental_guard_enabled = (
+        os.environ.get("AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD", "0") == "1"
+    )
+    matched_wrappers_enabled = (
+        os.environ.get("AGENTIC_RAN_EVAL_MATCHED_WRAPPERS", "0") == "1"
+    )
     fold_baselines: list[pd.DataFrame] = []
     decision_tables: list[pd.DataFrame] = []
+    comparison_models = ["proposed", "fqi", "cql_linear", "behavior_hgb"]
+    if experimental_guard_enabled:
+        comparison_models.append("support_guarded")
+    if matched_wrappers_enabled:
+        comparison_models.extend(
+            ["fqi_matched", "cql_linear_matched", "behavior_hgb_matched"]
+        )
     details_acc: dict[str, dict[str, list[pd.DataFrame]]] = {
-        split: {model: [] for model in ("proposed", "fqi", "cql_linear", "behavior_hgb")}
+        split: {model: [] for model in comparison_models}
         for split in ("seen", "unseen")
     }
     calibration_tables: list[pd.DataFrame] = []
@@ -425,6 +445,10 @@ def run_crossfit_benchmark(
                 fqi,
                 cql,
                 ablation_sink=fold_ablations,
+                state_support_guard=(
+                    local_overlap if experimental_guard_enabled else None
+                ),
+                evaluate_matched_wrappers=matched_wrappers_enabled,
             )
             for row in fold_ablations:
                 row["crossfit_fold"] = fold_name
@@ -516,6 +540,29 @@ def run_crossfit_benchmark(
                 science,
                 seed + 6000 + split_index * 100 + offset,
                 "episode_id",
+            )
+        if matched_wrappers_enabled:
+            for offset, model in enumerate(
+                ("fqi_matched", "cql_linear_matched", "behavior_hgb_matched")
+            ):
+                key = f"{split}:proposed_vs_{model}"
+                clustered[key] = _paired_group_statistics(
+                    proposed, details[split][model], science,
+                    seed + 9000 + split_index * 100 + offset, "cluster_id",
+                )
+                episode_secondary[key] = _paired_group_statistics(
+                    proposed, details[split][model], science,
+                    seed + 9200 + split_index * 100 + offset, "episode_id",
+                )
+        if experimental_guard_enabled:
+            guard_key = f"{split}:support_guarded_vs_proposed"
+            clustered[guard_key] = _paired_group_statistics(
+                details[split]["support_guarded"], proposed, science,
+                seed + 8000 + split_index, "cluster_id",
+            )
+            episode_secondary[guard_key] = _paired_group_statistics(
+                details[split]["support_guarded"], proposed, science,
+                seed + 8100 + split_index, "episode_id",
             )
 
     proposed_seen = details["seen"]["proposed"]
@@ -619,6 +666,20 @@ def run_crossfit_benchmark(
         "churn": "open-loop selected-action changes across consecutive logged states, not realized actuation",
         "support": "slice-level action overlap plus a sampled state-conditional diagnostic; no causal guarantee",
     }
+    if matched_wrappers_enabled:
+        warnings.append(
+            "Matched-wrapper FQI, CQL and HGB baselines are experimental. "
+            "They use the same learned critic and safety/hysteresis envelope "
+            "as the proposed method; do not describe them as independent "
+            "unmodified RL baselines."
+        )
+    if experimental_guard_enabled:
+        warnings.append(
+            "Experimental dual-role kNN support guard enabled. Abstention is "
+            "not proof of causal identification or safe network actuation; "
+            "compare its independent OPE utility and deferral rate against "
+            "the unguarded proposed method before promoting it."
+        )
     if any(
         summary["joint_local_overlap"] < 0.5
         for key, summary in overlap_summary.items()
@@ -683,6 +744,36 @@ def run_crossfit_benchmark(
         "claim_scope": claim_scope,
         "tradeoff_summary": tradeoffs,
         "state_conditional_overlap": overlap_summary,
+        "experimental_matched_wrappers": {
+            "enabled": matched_wrappers_enabled,
+            "same_safety_hysteresis_ood_envelope": True,
+            "not_unmodified_baselines": True,
+        },
+        "experimental_support_guard": {
+            "enabled": experimental_guard_enabled,
+            "evaluation_only": True,
+            "training_roles_only": True,
+            "local_support_proxy_not_causal": True,
+            "results": {
+                split: {
+                    "deferral_rate": float(
+                        baselines.loc[
+                            baselines["split"].eq(split)
+                            & baselines["model"].eq("support_guarded"),
+                            "support_deferral_rate",
+                        ].iloc[0]
+                    ),
+                    "utility": float(
+                        baselines.loc[
+                            baselines["split"].eq(split)
+                            & baselines["model"].eq("support_guarded"),
+                            "selected_ope_mean_utility",
+                        ].iloc[0]
+                    ),
+                }
+                for split in ("seen", "unseen")
+            } if experimental_guard_enabled else {},
+        },
         "ablation_variants": sorted(set(ablations["variant"])),
         "clustered_statistics": clustered,
         "ood_detection": ood_detection,
