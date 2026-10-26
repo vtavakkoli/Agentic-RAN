@@ -100,8 +100,23 @@ def evaluate_support(seed=2026, train_per_role=3000, validation=850, test=1400):
                 vals = np.full(len(x), -0.12)  # explicit abstention opportunity cost
                 vals[rows] = utility[rows, choice.actions[rows]]
                 selected_risk = risk[rows, choice.actions[rows]] if len(rows) else []
+                # Matched eligibility: old method rejects the entire top
+                # proposal; re-ranking searches remaining safe candidates.
+                legacy_top = np.argmax(scores, axis=1)
+                legacy_ok = (
+                    (p > alpha) & (upper <= 0.45)
+                    & (uncertainty <= 0.5)
+                )[np.arange(len(x)), legacy_top]
+                legacy_vals = np.full(len(x), -0.12)
+                legacy_rows = np.flatnonzero(legacy_ok)
+                legacy_vals[legacy_rows] = utility[
+                    legacy_rows, legacy_top[legacy_rows]
+                ]
                 results[f"{method}:{alpha:.2f}"] = {
                     "mean_utility_with_abstention": float(np.mean(vals)),
+                    "legacy_deferral_utility": float(np.mean(legacy_vals)),
+                    "utility_gain_over_legacy_deferral": float(np.mean(vals - legacy_vals)),
+                    "legacy_actuation_coverage": float(legacy_ok.mean()),
                     "actuation_coverage": float(np.mean(active)),
                     "conditional_true_risk": (
                         float(np.mean(selected_risk)) if len(rows) else None
