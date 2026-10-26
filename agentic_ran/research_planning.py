@@ -129,7 +129,9 @@ def evaluate_planners(seed=999, episodes=12, steps=20, disturbance=0.10):
     """Paired episodes across horizons and deliberate model-error levels."""
     model = fit_dynamics()
     results = {}
+    paired = {}
     for bias in (0.0, 0.12, 0.30):
+        returns_by_horizon = {}
         for horizon in (1, 2, 4):
             cumulative, violations, abstentions, switching = [], [], [], []
             for episode in range(episodes):
@@ -158,6 +160,7 @@ def evaluate_planners(seed=999, episodes=12, steps=20, disturbance=0.10):
                 violations.append(unsafe / steps)
                 abstentions.append(declined / steps)
                 switching.append(switched / steps)
+            returns_by_horizon[horizon] = np.asarray(cumulative)
             results[f"bias={bias:.2f}:h={horizon}"] = {
                 "mean_return": float(np.mean(cumulative)),
                 "return_std": float(np.std(cumulative, ddof=1)),
@@ -165,8 +168,20 @@ def evaluate_planners(seed=999, episodes=12, steps=20, disturbance=0.10):
                 "abstention": float(np.mean(abstentions)),
                 "switching": float(np.mean(switching)),
             }
+        for horizon in (2, 4):
+            delta = returns_by_horizon[horizon] - returns_by_horizon[1]
+            rng = np.random.default_rng(seed + 50000 + horizon)
+            sampled = rng.integers(0, episodes, size=(2500, episodes))
+            ci = np.quantile(delta[sampled].mean(axis=1), [0.025, 0.975])
+            paired[f"bias={bias:.2f}:h={horizon}-h=1"] = {
+                "mean_return_improvement": float(delta.mean()),
+                "bootstrap_ci95": [float(ci[0]), float(ci[1])],
+                "episode_win_rate": float(np.mean(delta > 0)),
+                "episodes": episodes,
+            }
     return {
         "dynamics_holdout_rmse": model.rmse,
         "scenarios": results,
+        "paired_horizon_effects": paired,
         "warning": "Toy action-dependent closed-loop simulator, not a RAN validation.",
     }
