@@ -971,6 +971,7 @@ def _evaluate_split(
     cql: Any,
     *,
     ablation_sink: list[dict[str, Any]] | None = None,
+    state_support_guard: Any | None = None,
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame], pd.DataFrame]:
     evaluator_predictions = evaluator.predict_all(frame)
     precomputed = _policy_precompute(bundle, frame)
@@ -1005,6 +1006,47 @@ def _evaluate_split(
     )
     summaries = [proposed_summary]
     details = {"proposed": proposed_detail}
+    if state_support_guard is not None:
+        # Experimental, train-only dual-role local action-support abstention.
+        # Preserve the unguarded proposed method for a paired comparison.
+        guarded = state_support_guard.guard_selections(
+            frame,
+            proposed_decisions["selected_action"].to_numpy(),
+            _current_actions(frame),
+            allowed_by_slice=bundle.actions_by_slice,
+            fallback_by_slice=bundle.fallback_by_slice,
+        )
+        guard_rollback = (
+            proposed_decisions["rollback"].to_numpy(dtype=bool)
+            | guarded["support_deferral"].to_numpy(dtype=bool)
+        )
+        guarded_summary, guarded_detail = _score_from_predictions(
+            evaluator,
+            frame,
+            guarded["selected_action"].to_numpy(),
+            evaluator_predictions,
+            calibrated,
+            "support_guarded",
+            rollback=guard_rollback,
+            ood_score=proposed_decisions["ood_score"].to_numpy(),
+        )
+        guarded_summary["support_deferral_rate"] = float(
+            guarded["support_deferral"].mean()
+        )
+        guarded_summary["unsupported_incumbent_fallback_rate"] = float(
+            guarded["unsupported_incumbent_fallback"].mean()
+        )
+        guarded_detail["support_deferral"] = guarded[
+            "support_deferral"
+        ].to_numpy(dtype=bool)
+        guarded_detail["locally_supported_proposal"] = guarded[
+            "locally_supported_proposal"
+        ].to_numpy(dtype=bool)
+        guarded_detail["unsupported_incumbent_fallback"] = guarded[
+            "unsupported_incumbent_fallback"
+        ].to_numpy(dtype=bool)
+        summaries.append(guarded_summary)
+        details["support_guarded"] = guarded_detail
     for model_name, actions in (
         ("fqi", fqi_actions),
         ("cql_linear", cql_actions),
