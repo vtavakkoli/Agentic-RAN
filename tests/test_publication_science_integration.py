@@ -140,6 +140,7 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
 ):
     monkeypatch.setenv("AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_MATCHED_WRAPPERS", "1")
+    monkeypatch.setenv("AGENTIC_RAN_EVAL_CONFORMAL_RERANK", "1")
     data = tmp_path / "synthetic.csv.gz"
     output = tmp_path / "publication"
     _synthetic_publication_frame().to_csv(data, index=False, compression="gzip")
@@ -214,6 +215,9 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     models = set(pd.read_csv(output / "publication_baselines.csv")["model"])
     assert {"support_guarded", "fqi_matched", "cql_linear_matched",
             "behavior_hgb_matched"} <= models
+    assert summary["research_conformal_rerank"]["enabled"]
+    assert (output / "research_conformal_validation.csv").is_file()
+    assert (output / "research_conformal_final_tests.csv").is_file()
     assert "seen:support_guarded_vs_proposed" in summary["clustered_statistics"]
     assert "unseen:proposed_vs_fqi_matched" in summary["clustered_statistics"]
     report = (output / "report.html").read_text(encoding="utf-8")
