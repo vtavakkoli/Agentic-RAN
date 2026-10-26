@@ -434,6 +434,7 @@ def _choose_from_precomputed(
     disable_ood: bool = False,
     disable_uncertainty: bool = False,
     disable_hysteresis: bool = False,
+    proposed_actions: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     predictions = pre["predictions"]
     allowed = pre["allowed"]
@@ -461,6 +462,22 @@ def _choose_from_precomputed(
     has_safe = np.any(safe, axis=1)
     selected_idx = np.argmax(safe_score, axis=1)
     action_index = {action: idx for idx, action in enumerate(bundle.actions)}
+    if proposed_actions is not None:
+        # Matched control wrapper: preserve the baseline's proposal, but
+        # apply the same SLA/uncertainty, OOD, fallback and switching rules.
+        # Critic scores determine the safety/hysteresis decision, NOT a new
+        # baseline action ranking. All inputs are from policy-fit models.
+        if len(proposed_actions) != len(targets):
+            raise ValueError("baseline proposal length mismatch")
+        proposed_idx = np.asarray(
+            [action_index.get(str(action), -1) for action in proposed_actions],
+            dtype=int,
+        )
+        valid = proposed_idx >= 0
+        has_safe = valid & safe[
+            np.arange(len(targets)), np.maximum(proposed_idx, 0)
+        ]
+        selected_idx = np.maximum(proposed_idx, 0)
     slices = targets["slice_type"].astype(str).to_numpy()
     fallback_idx = np.empty(len(targets), dtype=int)
     current_idx = np.full(len(targets), -1, dtype=int)
@@ -972,6 +989,7 @@ def _evaluate_split(
     *,
     ablation_sink: list[dict[str, Any]] | None = None,
     state_support_guard: Any | None = None,
+    evaluate_matched_wrappers: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame], pd.DataFrame]:
     evaluator_predictions = evaluator.predict_all(frame)
     precomputed = _policy_precompute(bundle, frame)
@@ -1062,6 +1080,30 @@ def _evaluate_split(
         )
         summaries.append(summary)
         details[model_name] = detail
+        if evaluate_matched_wrappers:
+            wrapped = _choose_from_precomputed(
+                bundle, precomputed, calibrated, switch_margin,
+                proposed_actions=actions,
+            )
+            wrapped_name = f"{model_name}_matched"
+            wrapped_summary, wrapped_detail = _score_from_predictions(
+                evaluator,
+                frame,
+                wrapped["selected_action"],
+                evaluator_predictions,
+                calibrated,
+                wrapped_name,
+                rollback=wrapped["rollback"],
+                ood_score=wrapped["ood_score"],
+            )
+            wrapped_summary["ood_fallback_rate"] = float(
+                wrapped["fallback_reason"].eq("ood").mean()
+            )
+            wrapped_detail["fallback_reason"] = wrapped[
+                "fallback_reason"
+            ].to_numpy(dtype=object)
+            summaries.append(wrapped_summary)
+            details[wrapped_name] = wrapped_detail
     summaries.append(_observed_logged_summary(frame, evaluator, calibrated))
     if ablation_sink is not None:
         ablation_sink.append({
