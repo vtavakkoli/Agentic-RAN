@@ -133,10 +133,24 @@ class ConformalActionSupport:
     def action_support(self, x, slices, action_names, method, alpha=0.05):
         if not 0 <= alpha < 1 or method not in self.methods:
             raise ValueError("invalid method or alpha")
-        return np.column_stack([
+        result = np.column_stack([
             self.pvalues(x, slices, name, method) > alpha
             for name in action_names
         ])
+        # If the requested alpha is below the attainable calibration p-value
+        # resolution, *every* candidate would pass. Do not report an
+        # uninformative support guarantee from an underpowered stratum.
+        labels = np.asarray(slices, dtype=str)
+        min_cal = (1.0 / alpha - 1.0) if alpha > 0 else float("inf")
+        for column, action in enumerate(action_names):
+            for sl in np.unique(labels):
+                refs = [
+                    self.fitted.get((role, sl, str(action), method))
+                    for role in ("policy", "evaluator")
+                ]
+                if any(ref is None or len(ref[2]) < min_cal for ref in refs):
+                    result[labels == sl, column] = False
+        return result
 
 
 def rerank(
