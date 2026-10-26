@@ -72,3 +72,13 @@ def test_method_selection_is_validation_only():
     assert report["selection"]["winner"] in report["all_results"]["validation"]
     assert 0 <= report["heldout_seen"]["actuation_coverage"] <= 1
     assert 0 <= report["heldout_shifted"]["actuation_coverage"] <= 1
+
+
+def test_underresolved_conformal_alpha_is_rejected_not_accepted():
+    estimator = _fit()
+    frame = np.zeros((4, 3))
+    # Under 99 held-out calibration rows, alpha=.01 is unresolvable.
+    support = estimator.action_support(
+        frame, ["eMBB"] * 4, ["A", "B"], "knn", 0.01,
+    )
+    assert not support.any()
