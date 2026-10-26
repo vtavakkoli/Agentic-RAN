@@ -137,3 +137,101 @@ class StateConditionalSupportAudit:
                         }
                     )
         return rows
+
+
+    def candidate_supported(
+        self,
+        frame: pd.DataFrame,
+        selected_actions: Sequence[str],
+        *,
+        batch_size: int = 4096,
+    ) -> np.ndarray:
+        """Check every proposed state/action against both training-role envelopes.
+
+        Radii are fixed from training, and are descriptive kNN overlap proxies,
+        not propensities or causal identification. Reject missing/nonfinite data.
+        This method checks all queried rows, unlike the sampled audit.
+        """
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        if len(selected_actions) != len(frame):
+            raise ValueError("selected_actions length must equal frame length")
+        missing = set(CONTEXT_COLUMNS) - set(frame.columns)
+        if missing:
+            raise ValueError(f"missing context features: {sorted(missing)}")
+        selections = np.asarray(selected_actions, dtype=str)
+        slices = frame["slice_type"].astype(str).to_numpy()
+        supported = np.zeros(len(frame), dtype=bool)
+        raw = frame[list(CONTEXT_COLUMNS)].to_numpy(dtype=float)
+        for slice_type in np.unique(slices):
+            slice_rows = np.flatnonzero(slices == slice_type)
+            for action in np.unique(selections[slice_rows]):
+                refs = [
+                    self.references.get((role, str(slice_type), str(action)))
+                    for role in ("policy", "evaluator")
+                ]
+                if any(ref is None for ref in refs):
+                    continue
+                rows = slice_rows[selections[slice_rows] == action]
+                for begin in range(0, len(rows), batch_size):
+                    chunk = rows[begin:begin + batch_size]
+                    finite = np.isfinite(raw[chunk]).all(axis=1)
+                    if not finite.any():
+                        continue
+                    valid = chunk[finite]
+                    values = self.scaler.transform(raw[valid])
+                    mask = np.ones(len(valid), dtype=bool)
+                    for nn, radius, _ in refs:
+                        nearest = nn.kneighbors(
+                            values, n_neighbors=1, return_distance=True
+                        )[0][:, 0]
+                        mask &= nearest <= radius
+                    supported[valid] = mask
+        return supported
+
+    def guard_selections(
+        self,
+        frame: pd.DataFrame,
+        selected_actions: Sequence[str],
+        incumbent_actions: Sequence[str],
+        *,
+        allowed_by_slice: Mapping[str, Sequence[str]],
+        fallback_by_slice: Mapping[str, str],
+        batch_size: int = 4096,
+    ) -> pd.DataFrame:
+        """Abstain from locally unsupported proposals using an eligible incumbent.
+
+        A configured fallback is used when incumbent is outside joint action
+        support. Neither fallback nor abstention certifies real-world safety.
+        """
+        if len(incumbent_actions) != len(frame):
+            raise ValueError("incumbent_actions length must equal frame length")
+        proposed = np.asarray(selected_actions, dtype=str)
+        incumbent = np.asarray(incumbent_actions, dtype=str)
+        local_ok = self.candidate_supported(
+            frame, proposed, batch_size=batch_size
+        )
+        chosen = proposed.copy()
+        deferred = ~local_ok
+        fallback_used = np.zeros(len(frame), dtype=bool)
+        slices = frame["slice_type"].astype(str).to_numpy()
+        for slice_type in np.unique(slices[deferred]):
+            rows = np.flatnonzero(deferred & (slices == slice_type))
+            allowed = set(map(str, allowed_by_slice.get(slice_type, ())))
+            fallback = fallback_by_slice.get(slice_type)
+            if fallback is None or fallback not in allowed:
+                raise ValueError(
+                    f"no allowed fallback for unsupported slice {slice_type}"
+                )
+            incumbent_ok = np.isin(incumbent[rows], list(allowed))
+            chosen[rows] = np.where(incumbent_ok, incumbent[rows], fallback)
+            fallback_used[rows] = ~incumbent_ok
+        return pd.DataFrame(
+            {
+                "selected_action": chosen,
+                "locally_supported_proposal": local_ok,
+                "support_deferral": deferred,
+                "unsupported_incumbent_fallback": fallback_used,
+            },
+            index=frame.index,
+        )
