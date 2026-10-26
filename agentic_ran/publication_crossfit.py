@@ -334,11 +334,18 @@ def run_crossfit_benchmark(
     experimental_guard_enabled = (
         os.environ.get("AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD", "0") == "1"
     )
+    matched_wrappers_enabled = (
+        os.environ.get("AGENTIC_RAN_EVAL_MATCHED_WRAPPERS", "0") == "1"
+    )
     fold_baselines: list[pd.DataFrame] = []
     decision_tables: list[pd.DataFrame] = []
     comparison_models = ["proposed", "fqi", "cql_linear", "behavior_hgb"]
     if experimental_guard_enabled:
         comparison_models.append("support_guarded")
+    if matched_wrappers_enabled:
+        comparison_models.extend(
+            ["fqi_matched", "cql_linear_matched", "behavior_hgb_matched"]
+        )
     details_acc: dict[str, dict[str, list[pd.DataFrame]]] = {
         split: {model: [] for model in comparison_models}
         for split in ("seen", "unseen")
@@ -438,6 +445,7 @@ def run_crossfit_benchmark(
                 state_support_guard=(
                     local_overlap if experimental_guard_enabled else None
                 ),
+                evaluate_matched_wrappers=matched_wrappers_enabled,
             )
             for row in fold_ablations:
                 row["crossfit_fold"] = fold_name
@@ -530,6 +538,19 @@ def run_crossfit_benchmark(
                 seed + 6000 + split_index * 100 + offset,
                 "episode_id",
             )
+        if matched_wrappers_enabled:
+            for offset, model in enumerate(
+                ("fqi_matched", "cql_linear_matched", "behavior_hgb_matched")
+            ):
+                key = f"{split}:proposed_vs_{model}"
+                clustered[key] = _paired_group_statistics(
+                    proposed, details[split][model], science,
+                    seed + 9000 + split_index * 100 + offset, "cluster_id",
+                )
+                episode_secondary[key] = _paired_group_statistics(
+                    proposed, details[split][model], science,
+                    seed + 9200 + split_index * 100 + offset, "episode_id",
+                )
         if experimental_guard_enabled:
             guard_key = f"{split}:support_guarded_vs_proposed"
             clustered[guard_key] = _paired_group_statistics(
@@ -642,6 +663,13 @@ def run_crossfit_benchmark(
         "churn": "open-loop selected-action changes across consecutive logged states, not realized actuation",
         "support": "slice-level action overlap plus a sampled state-conditional diagnostic; no causal guarantee",
     }
+    if matched_wrappers_enabled:
+        warnings.append(
+            "Matched-wrapper FQI, CQL and HGB baselines are experimental. "
+            "They use the same learned critic and safety/hysteresis envelope "
+            "as the proposed method; do not describe them as independent "
+            "unmodified RL baselines."
+        )
     if experimental_guard_enabled:
         warnings.append(
             "Experimental dual-role kNN support guard enabled. Abstention is "
@@ -713,6 +741,11 @@ def run_crossfit_benchmark(
         "claim_scope": claim_scope,
         "tradeoff_summary": tradeoffs,
         "state_conditional_overlap": overlap_summary,
+        "experimental_matched_wrappers": {
+            "enabled": matched_wrappers_enabled,
+            "same_safety_hysteresis_ood_envelope": True,
+            "not_unmodified_baselines": True,
+        },
         "experimental_support_guard": {
             "enabled": experimental_guard_enabled,
             "evaluation_only": True,
