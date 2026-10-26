@@ -340,6 +340,12 @@ def run_crossfit_benchmark(
     matched_wrappers_enabled = (
         os.environ.get("AGENTIC_RAN_EVAL_MATCHED_WRAPPERS", "0") == "1"
     )
+    conformal_rerank_enabled = (
+        os.environ.get("AGENTIC_RAN_EVAL_CONFORMAL_RERANK", "0") == "1"
+    )
+    conformal_selection = []
+    conformal_validation = []
+    conformal_tests = []
     fold_baselines: list[pd.DataFrame] = []
     decision_tables: list[pd.DataFrame] = []
     comparison_models = ["proposed", "fqi", "cql_linear", "behavior_hgb"]
@@ -432,6 +438,18 @@ def run_crossfit_benchmark(
             replace(pub_cfg, cql_alpha=selected_alpha),
             seed + 3000 + fold_index * 10000,
         )
+
+        if conformal_rerank_enabled:
+            from agentic_ran.publication_research import run_optional_conformal_fold
+
+            trial = run_optional_conformal_fold(
+                bundle, evaluator, policy_fit, ope_fit, validation_fold,
+                seen_fold, unseen_fold, calibrated,
+                seed=seed + 12000 + fold_index, fold=fold_name,
+            )
+            conformal_selection.append(trial["selection"])
+            conformal_validation.extend(trial["validation_grid"])
+            conformal_tests.extend(trial["final_tests"])
 
         for split_name, test in (("seen", seen_fold), ("unseen", unseen_fold)):
             fold_ablations: list[dict[str, Any]] = []
@@ -666,6 +684,13 @@ def run_crossfit_benchmark(
         "churn": "open-loop selected-action changes across consecutive logged states, not realized actuation",
         "support": "slice-level action overlap plus a sampled state-conditional diagnostic; no causal guarantee",
     }
+    if conformal_rerank_enabled:
+        warnings.append(
+            "Research conformal re-ranking is secondary evidence and may "
+            "abstain. Selected-action utility and SLA are conditional direct-method "
+            "estimates. The critic SLA prediction is NOT a calibrated upper "
+            "confidence bound, and kNN/GMM/normal scores are NOT causal action support."
+        )
     if matched_wrappers_enabled:
         warnings.append(
             "Matched-wrapper FQI, CQL and HGB baselines are experimental. "
@@ -744,6 +769,13 @@ def run_crossfit_benchmark(
         "claim_scope": claim_scope,
         "tradeoff_summary": tradeoffs,
         "state_conditional_overlap": overlap_summary,
+        "research_conformal_rerank": {
+            "enabled": conformal_rerank_enabled,
+            "validation_only_selection": True,
+            "fail_closed_no_action": True,
+            "claim_scope": "simulated/offline candidate-ranking diagnostic, not network safety",
+            "selections": conformal_selection,
+        },
         "experimental_matched_wrappers": {
             "enabled": matched_wrappers_enabled,
             "same_safety_hysteresis_ood_envelope": True,
@@ -791,6 +823,13 @@ def run_crossfit_benchmark(
 
     calibration = pd.concat(calibration_tables, ignore_index=True)
     cql_validation = pd.concat(cql_tables, ignore_index=True)
+    if conformal_rerank_enabled:
+        pd.DataFrame(conformal_validation).to_csv(
+            destination / "research_conformal_validation.csv", index=False
+        )
+        pd.DataFrame(conformal_tests).to_csv(
+            destination / "research_conformal_final_tests.csv", index=False
+        )
     baselines.to_csv(destination / "publication_baselines.csv", index=False)
     ablations.to_csv(destination / "publication_ablations.csv", index=False)
     state_overlap.to_csv(destination / "conditional_support.csv", index=False)
