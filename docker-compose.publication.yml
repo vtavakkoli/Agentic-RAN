@@ -8,6 +8,7 @@ x-study: &study
   user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
   environment:
     PYTHONUNBUFFERED: "1"
+    AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD: "${AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD:-0}"
   volumes:
     - ./data:/workspace/data
     - ./artifacts:/workspace/artifacts
