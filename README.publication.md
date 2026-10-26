@@ -14,6 +14,20 @@ Dependency chain:
 prepare-full-commag -> publication-test
 ```
 
+## 2026 research methods: conformal re-ranking and model-predictive control
+
+Experimental train-role-conditional support estimation (kNN, shrinkage
+Gaussian and Gaussian mixture), safety-constrained candidate re-ranking with
+explicit **no-actuation**, validation-only method/threshold selection, and an
+independent action-dependent queue simulation are described in
+[Research methods, assumptions and commands](docs/RESEARCH_METHODS_2026.md).
+
+Run the local reproducible science comparison using
+`python -m agentic_ran.research_benchmark`. For the expensive optional COMMAG
+comparison, set `AGENTIC_RAN_EVAL_CONFORMAL_RERANK=1` in the publication Compose
+workflow. Existing publication result tables are unaffected by default.
+No synthetic simulator gain is evidence of actual network improvements.
+
 ## Experimental dual-role support-gated controller
 
 The optional support-guarded variant combines the existing uncertainty/SLA-gated
