@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from agentic_ran.offline_policy import StudyConfig
+from agentic_ran.offline_policy import StudyConfig, _derive_targets
 from agentic_ran.publication_science import _policy_precompute
 from agentic_ran.publication_support import CONTEXT_COLUMNS
 from agentic_ran.research_support import ConformalActionSupport, rerank
@@ -43,7 +43,7 @@ def _actions_and_metrics(
     support: ConformalActionSupport,
     bundle, evaluator, frame: pd.DataFrame,
     config: StudyConfig, method: str, alpha: float,
-    *, batch_size: int = 16384,
+    *, sla_residual_margin: float = 0.0, batch_size: int = 16384,
 ):
     # Bound peak memory and kNN query sizes for full-size COMMAG splits.
     n = len(frame)
@@ -57,6 +57,9 @@ def _actions_and_metrics(
     for start in range(0, n, batch_size):
         chunk = frame.iloc[start:start + batch_size]
         scores, sla, uncertainty, allowed = _eligible_inputs(bundle, chunk, config)
+        # One-sided *logged-action* validation residual margin. This is not
+        # an identified counterfactual SLA upper confidence bound.
+        sla = np.clip(sla + sla_residual_margin, 0, 1)
         p = support.action_support(
             chunk[list(CONTEXT_COLUMNS)].to_numpy(float),
             chunk["slice_type"].astype(str).to_numpy(),
@@ -133,11 +136,41 @@ def run_optional_conformal_fold(
     support = ConformalActionSupport(
         seed=seed, max_reference=800,
     ).fit(roles)
+    # Separate episodes for critic residual calibration and selection.
+    episode_values = validation["episode_id"].astype(str).unique()
+    if len(episode_values) < 2:
+        raise ValueError("need >=2 validation episodes for disjoint calibration/selection")
+    rng = np.random.default_rng(seed + 177)
+    shuffled = rng.permutation(episode_values)
+    pivot = max(1, len(shuffled) // 2)
+    residual_frame = validation[
+        validation["episode_id"].astype(str).isin(shuffled[:pivot])
+    ]
+    selection_frame = validation[
+        validation["episode_id"].astype(str).isin(shuffled[pivot:])
+    ]
+    critic = _policy_precompute(bundle, residual_frame)["predictions"]["sla"]
+    targets = _derive_targets(residual_frame, bundle.energy_scale, bundle.config)
+    action_index = {a: i for i, a in enumerate(bundle.actions)}
+    logged = targets["action"].astype(str).map(action_index).fillna(-1).to_numpy(int)
+    observed = targets["_sla_cost"].to_numpy(float)
+    available = logged >= 0
+    residuals = observed[available] - critic[
+        np.flatnonzero(available), logged[available]
+    ]
+    residuals = residuals[np.isfinite(residuals)]
+    if not len(residuals):
+        # Nothing can be certified even under observational calibration.
+        margin = float("inf")
+    else:
+        quantile = min(1.0, np.ceil((len(residuals) + 1) * 0.95) / len(residuals))
+        margin = max(0.0, float(np.quantile(residuals, quantile, method="higher")))
     grid = []
     for method in ("knn", "gaussian", "gmm"):
         for alpha in (0.01, 0.05, 0.10, 0.20):
             metrics = _actions_and_metrics(
-                support, bundle, evaluator, validation, config, method, alpha,
+                support, bundle, evaluator, selection_frame, config, method, alpha,
+                sla_residual_margin=margin,
             )
             grid.append({
                 "fold": fold, "split": "validation",
@@ -154,6 +187,7 @@ def run_optional_conformal_fold(
         metrics = _actions_and_metrics(
             support, bundle, evaluator, frame, config,
             winner["method"], winner["alpha"],
+            sla_residual_margin=margin,
         )
         results.append({
             "fold": fold, "split": name,
@@ -163,7 +197,11 @@ def run_optional_conformal_fold(
     return {
         "selection": {
             "fold": fold, "method": winner["method"], "alpha": winner["alpha"],
-            "selection_on": "seen_validation_only",
+            "selection_on": "seen_validation_only_disjoint_episodes",
+            "calibration_episodes": len(shuffled[:pivot]),
+            "selection_episodes": len(shuffled[pivot:]),
+            "logged_action_sla_residual_margin": margin,
+            "logged_residual_count": len(residuals),
             "support_fit_on": "training_experiment_roles_only",
         },
         "validation_grid": grid,
