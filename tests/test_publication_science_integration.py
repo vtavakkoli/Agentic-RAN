@@ -135,7 +135,11 @@ def _synthetic_publication_frame() -> pd.DataFrame:
     return frame
 
 
-def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(tmp_path: Path):
+def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
+    tmp_path: Path, monkeypatch,
+):
+    monkeypatch.setenv("AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD", "1")
+    monkeypatch.setenv("AGENTIC_RAN_EVAL_MATCHED_WRAPPERS", "1")
     data = tmp_path / "synthetic.csv.gz"
     output = tmp_path / "publication"
     _synthetic_publication_frame().to_csv(data, index=False, compression="gzip")
@@ -205,6 +209,13 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(tmp_pat
     assert len(pd.read_csv(output / "publication_ablations.csv")) == 20
     assert not pd.read_csv(output / "conditional_support.csv").empty
     assert "state_conditional_overlap" in summary
+    assert summary["experimental_support_guard"]["enabled"]
+    assert summary["experimental_matched_wrappers"]["enabled"]
+    models = set(pd.read_csv(output / "publication_baselines.csv")["model"])
+    assert {"support_guarded", "fqi_matched", "cql_linear_matched",
+            "behavior_hgb_matched"} <= models
+    assert "seen:support_guarded_vs_proposed" in summary["clustered_statistics"]
+    assert "unseen:proposed_vs_fqi_matched" in summary["clustered_statistics"]
     report = (output / "report.html").read_text(encoding="utf-8")
     assert "Experiment cross-fit and positivity support" in report
     assert "Allowed manuscript claims" in report
