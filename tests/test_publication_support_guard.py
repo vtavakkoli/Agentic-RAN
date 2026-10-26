@@ -71,3 +71,15 @@ def test_invalid_input_rejected():
             allowed_by_slice={"eMBB": {"A"}},
             fallback_by_slice={"eMBB": "B"},
         )
+
+
+def test_fallback_action_names_are_never_truncated():
+    model = gate()
+    far = make_frame(100.0, count=5)
+    long_action = "proportional_fair:prb=8"
+    result = model.guard_selections(
+        far, ["A"] * 5, ["Z"] * 5,
+        allowed_by_slice={"eMBB": {"A", long_action}},
+        fallback_by_slice={"eMBB": long_action},
+    )
+    assert result.selected_action.to_list() == [long_action] * 5
