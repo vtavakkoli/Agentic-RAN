@@ -276,7 +276,10 @@ def _tradeoff_summary(
             continue
         proposed = local.loc["proposed"]
         result[split] = {}
-        for baseline in ("fqi", "cql_linear", "behavior_hgb"):
+        for baseline in (
+            "fqi", "cql_linear", "behavior_hgb",
+            "fqi_matched", "cql_linear_matched", "behavior_hgb_matched",
+        ):
             if baseline not in local.index:
                 continue
             other = local.loc[baseline]
