@@ -13,8 +13,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from agentic_ran.offline_policy import StudyConfig, _derive_targets
-from agentic_ran.publication_science import _policy_precompute
+from agentic_ran.offline_policy import StudyConfig, _current_actions, _derive_targets
+from agentic_ran.publication_science import _choose_from_precomputed, _policy_precompute
+from agentic_ran.selective_evidence import cluster_accounting, combine_chunks, accounting_summary
 from agentic_ran.publication_support import CONTEXT_COLUMNS
 from agentic_ran.research_support import ConformalActionSupport, rerank
 
@@ -36,7 +37,7 @@ def _eligible_inputs(bundle, frame: pd.DataFrame, config: StudyConfig):
     allowed = pre["allowed"] & (
         pre["ood"][:, None] <= config.ood_threshold
     )
-    return utility, predicted["sla"], predicted["uncertainty"], allowed
+    return utility, predicted["sla"], predicted["uncertainty"], allowed, pre
 
 
 def _actions_and_metrics(
@@ -44,64 +45,127 @@ def _actions_and_metrics(
     bundle, evaluator, frame: pd.DataFrame,
     config: StudyConfig, method: str, alpha: float,
     *, sla_residual_margin: float = 0.0, batch_size: int = 16384,
+    collect_clusters: bool = False, switch_margin: float = 0.0,
 ):
-    # Bound peak memory and kNN query sizes for full-size COMMAG splits.
+    """Paired evaluation with three explicitly distinct abstention estimands.
+
+    All policy candidates use policy-side critics; independent evaluator
+    predictions enter only *after* selection. If no candidate is safe and
+    supported, actuation is withheld. Holding the current action is an
+    *external counterfactual evaluation scenario*, never silent execution.
+    """
     n = len(frame)
-    accepted = 0
-    reranked = 0
-    counted = 0
-    sum_utility = 0.0
-    sum_sla = 0.0
-    sum_energy = 0.0
-    sum_eligible = 0.0
+    accepted = reranked = counted = 0
+    sum_utility = sum_sla = sum_energy = sum_eligible = 0.0
+    sum_hold_score = 0.0
+    hold_available = hold_abstentions = 0
+    evidence_rows = []
+    breakdown = []
     for start in range(0, n, batch_size):
         chunk = frame.iloc[start:start + batch_size]
-        scores, sla, uncertainty, allowed = _eligible_inputs(bundle, chunk, config)
-        # One-sided *logged-action* validation residual margin. This is not
-        # an identified counterfactual SLA upper confidence bound.
+        scores, sla, uncertainty, allowed, pre = _eligible_inputs(bundle, chunk, config)
         sla = np.clip(sla + sla_residual_margin, 0, 1)
         p = support.action_support(
             chunk[list(CONTEXT_COLUMNS)].to_numpy(float),
             chunk["slice_type"].astype(str).to_numpy(),
             bundle.actions, method, alpha,
         )
-        # Logged incumbent is for the switching penalty only, NOT a bypass.
-        from agentic_ran.offline_policy import _current_actions
         incumbents = _current_actions(chunk)
         action_index = {a: i for i, a in enumerate(bundle.actions)}
-        incumbent_idx = [action_index.get(str(a), -1) for a in incumbents]
+        incumbent_idx = np.array(
+            [action_index.get(str(a), -1) for a in incumbents], dtype=int,
+        )
         decisions = rerank(
             scores, sla, uncertainty, allowed, p, incumbent_idx,
-            method=method, alpha=alpha,
-            max_sla=config.sla_threshold,
+            method=method, alpha=alpha, max_sla=config.sla_threshold,
             max_uncertainty=config.uncertainty_threshold,
             switch_cost=0.01,
         )
-        ok = np.flatnonzero(~decisions.abstain)
+        keep = ~decisions.abstain
+        ok = np.flatnonzero(keep)
         counted += len(chunk)
         accepted += len(ok)
         reranked += int(decisions.reranked.sum())
         sum_eligible += float(decisions.eligible_counts.sum())
-        if not len(ok):
-            continue
-        # OPE predictions never influence the selection decision.
         ope = evaluator.predict_all(chunk)
-        ix = decisions.actions[ok]
-        risk = ope["sla"][ok, ix]
-        energy = ope["energy"][ok, ix]
-        stability = ope["stability"][ok, ix]
         weight = config.sla_weight + config.energy_weight + config.stability_weight
-        value = 1.0 - (
-            config.sla_weight * risk
-            + config.energy_weight * energy
-            + config.stability_weight * stability
+        dm = 1.0 - (
+            config.sla_weight * ope["sla"]
+            + config.energy_weight * ope["energy"]
+            + config.stability_weight * ope["stability"]
         ) / max(weight, 1e-9)
-        sum_utility += float(np.sum(value))
-        sum_sla += float(np.sum(risk > config.sla_threshold))
-        sum_energy += float(np.sum(energy))
-    return {
-        "rows": counted,
-        "accepted": accepted,
+        mapping = {action: i for i, action in enumerate(evaluator.actions)}
+        action_names = np.asarray(bundle.actions, dtype=object)
+        selected_dm = np.full(len(chunk), np.nan)
+        if len(ok):
+            chosen = action_names[decisions.actions[ok]]
+            chosen_idx = np.array([mapping[str(action)] for action in chosen], dtype=int)
+            selected_dm[ok] = dm[ok, chosen_idx]
+            sum_utility += float(selected_dm[ok].sum())
+            sum_sla += float(np.sum(ope["sla"][ok, chosen_idx] > config.sla_threshold))
+            sum_energy += float(np.sum(ope["energy"][ok, chosen_idx]))
+        local = np.flatnonzero(incumbent_idx >= 0)
+        incumbent_dm = np.full(len(chunk), np.nan)
+        if len(local):
+            eval_idx = np.array([mapping.get(str(incumbents[i]), -1) for i in local])
+            valid = eval_idx >= 0
+            incumbent_dm[local[valid]] = dm[local[valid], eval_idx[valid]]
+        incumbent_positions = np.maximum(incumbent_idx, 0)
+        row_positions = np.arange(len(chunk))
+        # A prospective hold action is evaluated only if it passes the SAME
+        # policy-side SLA/uncertainty/OOD and two-role support mask as an
+        # issued proposal. These are model-based gates, not real safety proof.
+        incumbent_ok = (
+            np.isfinite(incumbent_dm)
+            & evaluator.supported(chunk, incumbents)
+            & allowed[row_positions, incumbent_positions]
+            & p[row_positions, incumbent_positions]
+            & (sla[row_positions, incumbent_positions] <= config.sla_threshold)
+            & (
+                uncertainty[row_positions, incumbent_positions]
+                <= config.uncertainty_threshold
+            )
+        )
+        hold = ~keep
+        supported_hold = hold & incumbent_ok
+        hold_available += int(supported_hold.sum())
+        hold_abstentions += int(hold.sum())
+        # For unresolved hold decisions, retain the explicit penalty rather
+        # than pretending the fallback was validated or has zero cost.
+        sum_hold_score += float(np.nansum(selected_dm[ok])) + float(
+            np.sum(incumbent_dm[supported_hold])
+        ) - 0.12 * int((hold & ~incumbent_ok).sum())
+        if collect_clusters:
+            reference_decisions = _choose_from_precomputed(
+                bundle, pre, config, switch_margin,
+            )
+            references = reference_decisions["selected_action"].astype(str).to_numpy()
+            reference_idx = np.array([mapping[str(a)] for a in references], dtype=int)
+            reference_dm = dm[np.arange(len(chunk)), reference_idx]
+            observed = _derive_targets(
+                chunk, evaluator.energy_scale, config,
+            )
+            logged_is_incumbent = (
+                observed["action"].astype(str).to_numpy()
+                == incumbents.astype(str)
+            )
+            evidence_rows.extend(cluster_accounting(
+                chunk, keep, selected_dm, reference_dm,
+                incumbent_dm, incumbent_ok, logged_is_incumbent,
+                observed["_utility_reward"].to_numpy(float),
+                abstention_penalty=-0.12,
+            ))
+            if {"scenario", "slice_type"} <= set(chunk.columns):
+                for (scenario, sl), pos in chunk.groupby(
+                    ["scenario", "slice_type"], sort=True,
+                ).indices.items():
+                    pos = np.asarray(pos, dtype=int)
+                    breakdown.append({
+                        "scenario": str(scenario), "slice_type": str(sl),
+                        "rows": len(pos), "accepted": int(keep[pos].sum()),
+                    })
+    metrics = {
+        "rows": counted, "accepted": accepted,
         "coverage": accepted / max(counted, 1),
         "abstention_rate": 1 - accepted / max(counted, 1),
         "rerank_rate": reranked / max(counted, 1),
@@ -109,27 +173,38 @@ def _actions_and_metrics(
         "conditional_dm_utility": sum_utility / accepted if accepted else None,
         "conditional_dm_sla_violation": sum_sla / accepted if accepted else None,
         "conditional_dm_energy_proxy": sum_energy / accepted if accepted else None,
-        # An explicitly chosen opportunity cost makes unconditional results
-        # comparable at differing abstention rates; this is NOT observed RAN utility.
         "assumed_abstention_utility": -0.12,
         "unconditional_decision_score": (
             sum_utility - 0.12 * (counted - accepted)
         ) / max(counted, 1),
-        "evidence": "independent_direct_method_estimate_not_observed",
+        "hold_incumbent_dm_sensitivity_score": sum_hold_score / max(counted, 1),
+        "hold_incumbent_support_on_abstentions": hold_available / max(hold_abstentions, 1),
+        "evidence": "independent_direct_method_and_observational_proxy_not_causal",
     }
-
+    if collect_clusters:
+        cluster_table = combine_chunks(evidence_rows)
+        metrics["cluster_rows"] = cluster_table.to_dict(orient="records")
+        metrics["paired_accounting"] = accounting_summary(cluster_table)
+        metrics["slice_scenario"] = (
+            pd.DataFrame(breakdown)
+            .groupby(["scenario", "slice_type"], as_index=False)[["rows", "accepted"]]
+            .sum().to_dict(orient="records") if breakdown else []
+        )
+    return metrics
 
 def run_optional_conformal_fold(
     bundle, evaluator, policy_fit: pd.DataFrame,
     ope_fit: pd.DataFrame, validation: pd.DataFrame,
     seen: pd.DataFrame, unseen: pd.DataFrame,
     config: StudyConfig, *, seed: int, fold: str,
+    switch_margin: float = 0.0,
 ):
     roles = {
         role: (
             frame[list(CONTEXT_COLUMNS)].to_numpy(float),
             frame["slice_type"].astype(str).to_numpy(),
             frame["action"].astype(str).to_numpy(),
+            frame["episode_id"].astype(str).to_numpy(),
         )
         for role, frame in (("policy", policy_fit), ("evaluator", ope_fit))
     }
@@ -158,13 +233,30 @@ def run_optional_conformal_fold(
     residuals = observed[available] - critic[
         np.flatnonzero(available), logged[available]
     ]
-    residuals = residuals[np.isfinite(residuals)]
-    if not len(residuals):
-        # Nothing can be certified even under observational calibration.
+    episode_for_residual = targets.loc[
+        available, "episode_id"
+    ].astype(str).to_numpy()
+    finite_residual = np.isfinite(residuals)
+    residuals = residuals[finite_residual]
+    episode_for_residual = episode_for_residual[finite_residual]
+    # One worst-case residual per independent episode, instead of treating
+    # correlated 250-ms/1-s observations as independent calibration units.
+    blocked_residuals = np.array([
+        np.max(residuals[episode_for_residual == ep])
+        for ep in np.unique(episode_for_residual)
+    ])
+    if len(blocked_residuals) < 19:
+        # 95% one-sided bound needs at least 19 independent calibration units.
+        # The safe response to too few episodes is to disable actuation.
         margin = float("inf")
     else:
-        quantile = min(1.0, np.ceil((len(residuals) + 1) * 0.95) / len(residuals))
-        margin = max(0.0, float(np.quantile(residuals, quantile, method="higher")))
+        quantile = min(
+            1.0, np.ceil((len(blocked_residuals) + 1) * 0.95)
+            / len(blocked_residuals),
+        )
+        margin = max(0.0, float(
+            np.quantile(blocked_residuals, quantile, method="higher")
+        ))
     grid = []
     for method in ("knn", "gaussian", "gmm"):
         for alpha in (0.01, 0.05, 0.10, 0.20):
@@ -178,17 +270,28 @@ def run_optional_conformal_fold(
             })
     winner = max(
         grid, key=lambda item: (
-            item["unconditional_decision_score"]
+            item["hold_incumbent_dm_sensitivity_score"]
             - 0.01 * item["abstention_rate"]
         ),
     )
     results = []
+    clusters = []
+    slices = []
     for name, frame in (("seen", seen), ("unseen", unseen)):
         metrics = _actions_and_metrics(
             support, bundle, evaluator, frame, config,
             winner["method"], winner["alpha"],
-            sla_residual_margin=margin,
+            sla_residual_margin=margin, collect_clusters=True,
+            switch_margin=switch_margin,
         )
+        clusters.extend([
+            {"fold": fold, "split": name, **row}
+            for row in metrics.pop("cluster_rows")
+        ])
+        slices.extend([
+            {"fold": fold, "split": name, **row}
+            for row in metrics.pop("slice_scenario")
+        ])
         results.append({
             "fold": fold, "split": name,
             "method": winner["method"], "alpha": winner["alpha"],
@@ -202,8 +305,18 @@ def run_optional_conformal_fold(
             "selection_episodes": len(shuffled[pivot:]),
             "logged_action_sla_residual_margin": margin,
             "logged_residual_count": len(residuals),
+            "residual_calibration_episode_count": len(blocked_residuals),
+            "residual_calibration_protocol": "episode_maximum_95pct",
             "support_fit_on": "training_experiment_roles_only",
+            "support_calibration_protocol": support.calibration_protocol,
+            "support_calibration_units": {
+                "|".join(key): int(count)
+                for key, count in support.calibration_units.items()
+            },
+            "score_selected_on": "validation_hold_incumbent_dm_with_unresolved_penalty",
         },
         "validation_grid": grid,
         "final_tests": results,
+        "cluster_evidence": clusters,
+        "slice_scenario": slices,
     }

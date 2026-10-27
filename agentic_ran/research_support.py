@@ -44,38 +44,91 @@ class ConformalActionSupport:
         self.min_group, self.max_reference = min_group, max_reference
         self.calibration_fraction, self.seed = calibration_fraction, seed
         self.fitted = {}
+        self.calibration_units = {}
+        self.calibration_protocol = "unfitted"
 
-    def fit(self, roles: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]):
-        """roles: policy/evaluator -> (decision-time context, slice, action).
+    def fit(self, roles: dict[str, tuple]):
+        """Fit action-conditional conformal nonconformity models.
 
-        Role data must contain neither held-out evaluation rows nor overlapping
-        training episodes. Random train/calibration splitting assumes sufficient
-        independence; grouped episode splitting is needed for dependent traces.
+        Publication roles supply (context, slice, action, episode_id) to
+        guarantee disjoint training/calibration episodes. Three-tuples retain
+        legacy IID-row behavior for explicitly synthetic experiments.
+        Calibrate on one maximum nonconformity score per episode; a nominal
+        low alpha is never allowed unless enough independent calibration
+        episodes exist to resolve it.
         """
         if set(roles) != {"policy", "evaluator"}:
             raise ValueError("require policy and evaluator training roles")
         rng = np.random.default_rng(self.seed)
         self.fitted = {}
-        for role, (x, slices, actions) in roles.items():
-            x = np.asarray(x, dtype=float)
-            slices, actions = np.asarray(slices, dtype=str), np.asarray(actions, dtype=str)
+        self.calibration_units = {}
+        grouped = all(len(value) == 4 for value in roles.values())
+        if any(len(value) not in (3, 4) for value in roles.values()):
+            raise ValueError("each role needs context, slice, action, [episode_id]")
+        if not grouped and any(len(value) == 4 for value in roles.values()):
+            raise ValueError("mixing episode-blocked and IID roles is forbidden")
+        self.calibration_protocol = (
+            "held_out_episode_maximum" if grouped else "synthetic_iid_row"
+        )
+        if grouped:
+            policy_episodes = set(map(str, roles["policy"][3]))
+            evaluator_episodes = set(map(str, roles["evaluator"][3]))
+            if policy_episodes & evaluator_episodes:
+                raise ValueError("cross-role training episodes overlap")
+        for role, data in roles.items():
+            x = np.asarray(data[0], dtype=float)
+            slices = np.asarray(data[1], dtype=str)
+            actions = np.asarray(data[2], dtype=str)
+            episodes = np.asarray(data[3], dtype=str) if grouped else None
             if x.ndim != 2 or len(x) != len(slices) or len(x) != len(actions):
                 raise ValueError("incompatible role inputs")
+            if grouped and len(episodes) != len(x):
+                raise ValueError("episode identifiers must match context rows")
             for sl, act in sorted(set(zip(slices, actions))):
                 idx = np.flatnonzero((slices == sl) & (actions == act))
                 idx = idx[np.isfinite(x[idx]).all(axis=1)]
                 if len(idx) < self.min_group:
                     continue
-                idx = rng.permutation(idx)[:self.max_reference]
-                n_cal = max(8, int(len(idx) * self.calibration_fraction))
-                train, cal = x[idx[n_cal:]], x[idx[:n_cal]]
-                if len(train) < 8:
-                    continue
+                if grouped:
+                    episode_ids = np.unique(episodes[idx])
+                    if len(episode_ids) < 2:
+                        continue
+                    shuffled = rng.permutation(episode_ids)
+                    n_cal_episodes = max(1, int(np.ceil(
+                        len(shuffled) * self.calibration_fraction
+                    )))
+                    chosen_cal = set(shuffled[:n_cal_episodes])
+                    is_cal = np.isin(episodes[idx], list(chosen_cal))
+                    fit_idx = idx[~is_cal]
+                    cal_idx = idx[is_cal]
+                    # No row from a calibration episode can enter model fit.
+                    if len(fit_idx) < 8 or len(cal_idx) < 8:
+                        continue
+                    fit_idx = rng.permutation(fit_idx)[:self.max_reference]
+                    # Calibrate on complete held-out episodes, never on a
+                    # randomly thinned set of rows within an episode.
+                    cal_episodes = np.unique(episodes[cal_idx])
+                    if len(cal_episodes) > self.max_reference:
+                        cal_episodes = rng.permutation(cal_episodes)[
+                            :self.max_reference
+                        ]
+                        cal_idx = cal_idx[np.isin(
+                            episodes[cal_idx], cal_episodes,
+                        )]
+                else:
+                    idx = rng.permutation(idx)[:self.max_reference]
+                    n_cal = max(8, int(len(idx) * self.calibration_fraction))
+                    fit_idx, cal_idx = idx[n_cal:], idx[:n_cal]
+                    if len(fit_idx) < 8:
+                        continue
+                train, cal = x[fit_idx], x[cal_idx]
                 scaler = RobustScaler().fit(train)
                 z_train, z_cal = scaler.transform(train), scaler.transform(cal)
                 estimators = {}
                 if "knn" in self.methods:
-                    estimators["knn"] = NearestNeighbors(n_neighbors=1).fit(z_train)
+                    estimators["knn"] = NearestNeighbors(
+                        n_neighbors=1
+                    ).fit(z_train)
                 if "gaussian" in self.methods:
                     estimators["gaussian"] = LedoitWolf().fit(z_train)
                 if "gmm" in self.methods:
@@ -86,10 +139,21 @@ class ConformalActionSupport:
                     ).fit(z_train)
                 for method, model in estimators.items():
                     scores = self._nonconformity(model, method, z_cal)
-                    if np.isfinite(scores).all():
-                        self.fitted[(role, sl, act, method)] = (
-                            scaler, model, np.sort(scores),
-                        )
+                    if not np.isfinite(scores).all():
+                        continue
+                    if grouped:
+                        # Episode maxima mitigate within-episode dependence,
+                        # at the cost of stronger conservatism and lower n.
+                        maxima = []
+                        for episode in np.unique(episodes[cal_idx]):
+                            maxima.append(float(np.max(
+                                scores[episodes[cal_idx] == episode]
+                            )))
+                        scores = np.asarray(maxima, dtype=float)
+                    self.fitted[(role, sl, act, method)] = (
+                        scaler, model, np.sort(scores),
+                    )
+                    self.calibration_units[(role, sl, act, method)] = len(scores)
         return self
 
     @staticmethod

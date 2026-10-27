@@ -96,6 +96,7 @@ def fit_dynamics(seed=17, count=2800):
 def plan(
     state, previous_action, t, horizon, model, *, bias=0.0,
     risk_limit=4.5, discount=0.93, uncertainty_penalty=0.03,
+    risk_margin_z=1.0,
 ):
     """Receding-horizon search; reject predicted-unsafe action sequences.
 
@@ -105,6 +106,8 @@ def plan(
     """
     if horizon < 1 or horizon > 6:
         raise ValueError("horizon must be in 1..6")
+    if risk_margin_z < 0:
+        raise ValueError("risk_margin_z must be nonnegative")
     choices = np.asarray(list(product(range(len(ACTIONS)), repeat=horizon)), dtype=int)
     simulated = np.tile(np.asarray(state, dtype=float), (len(choices), 1))
     previous = np.full(len(choices), previous_action, dtype=float)
@@ -113,10 +116,14 @@ def plan(
     for h in range(horizon):
         action = ACTIONS[choices[:, h]]
         simulated = model.predict(simulated, action, t + h, bias=bias)
-        feasible &= simulated[:, 0] <= risk_limit
+        # Use a held-out model-error proxy, not the injected bias (which
+        # would leak the experimenter's misspecification into the planner).
+        model_error = max(float(getattr(model, "rmse", 0.0)), 0.0)
+        margin = risk_margin_z * model_error * np.sqrt(h + 1)
+        feasible &= simulated[:, 0] <= risk_limit - margin
         scores += discount**h * (
             reward(simulated, action, previous)
-            - uncertainty_penalty * bias**2 * (h + 1)
+            - uncertainty_penalty * model_error**2 * (h + 1)
         )
         previous = action
     scores[~feasible] = -np.inf
@@ -184,4 +191,78 @@ def evaluate_planners(seed=999, episodes=12, steps=20, disturbance=0.10):
         "scenarios": results,
         "paired_horizon_effects": paired,
         "warning": "Toy action-dependent closed-loop simulator, not a RAN validation.",
+    }
+
+
+class OracleDynamics:
+    """True toy transition dynamics, for a simulation upper-reference only.
+
+    This oracle is NEVER a deployable RAN world model.
+    """
+    rmse = 0.0
+
+    def predict(self, state, action, t, bias=0.0):
+        return next_state(state, action, t)
+
+
+def evaluate_oracle_gap(
+    *, seed: int = 2026, episodes: int = 12, steps: int = 20,
+    disturbance: float = 0.10, horizons=(1, 2, 4),
+):
+    """Compare learned vs oracle receding-horizon control on paired noise.
+
+    Includes realized constraint violations and costs. Even oracle MPC is
+    noncausal evidence for real RAN: this is a synthetic intervention engine.
+    """
+    if episodes < 2 or steps < 1:
+        raise ValueError("episodes must be >=2 and steps >=1")
+    learned = fit_dynamics(seed=seed + 7)
+    models = {"learned": learned, "oracle": OracleDynamics()}
+    output = {}
+    for model_name, model in models.items():
+        for horizon in horizons:
+            returns = []
+            violations = []
+            abstentions = []
+            switches = []
+            for ep in range(episodes):
+                rng = np.random.default_rng(seed + ep)
+                disturbances = rng.standard_normal((steps, 2))
+                state = np.array([2.3 + 0.3 * (ep % 3), 0.99, 0.85])
+                previous = float(ACTIONS[1])
+                total = bad = abstained = switched = 0
+                for t in range(steps):
+                    choice = plan(
+                        state, previous, t, horizon, model,
+                        risk_margin_z=1.0,
+                    )
+                    if choice < 0:
+                        abstained += 1
+                        # Environmental hold, not controller-issued safety action.
+                        action = previous
+                    else:
+                        action = float(ACTIONS[choice])
+                    future = next_state(
+                        state, action, t, noise=disturbances[t],
+                        disturbance=disturbance,
+                    )
+                    total += float(reward(future, action, previous))
+                    bad += int(future[0] > 4.5)
+                    switched += int(abs(action - previous) > 1e-8)
+                    state, previous = future, action
+                returns.append(total)
+                violations.append(bad / steps)
+                abstentions.append(abstained / steps)
+                switches.append(switched / steps)
+            output[f"{model_name}:h={horizon}"] = {
+                "mean_return": float(np.mean(returns)),
+                "violation_rate": float(np.mean(violations)),
+                "abstention_rate": float(np.mean(abstentions)),
+                "switching_rate": float(np.mean(switches)),
+                "paired_episode_returns": returns,
+            }
+    return {
+        "learned_transition_holdout_rmse": learned.rmse,
+        "results": output,
+        "warning": "Oracle and learned planning share a toy simulator; not live RAN evidence.",
     }

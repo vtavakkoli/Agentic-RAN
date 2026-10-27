@@ -215,7 +215,16 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     models = set(pd.read_csv(output / "publication_baselines.csv")["model"])
     assert {"support_guarded", "fqi_matched", "cql_linear_matched",
             "behavior_hgb_matched"} <= models
-    assert summary["research_conformal_rerank"]["enabled"]
+    research = summary["research_conformal_rerank"]
+    assert research["enabled"]
+    assert research["publication_ready"] is False
+    assert research["conformal_calibration_unit"] == "held_out_episode_maximum"
+    for split in ("seen", "unseen"):
+        assert research["paired_accounting"][split]["rows"] > 0
+        assert "fixed_penalty" in research["paired_cluster_statistics"][split]
+    assert (output / "research_conformal_cluster_evidence.csv").is_file()
+    assert (output / "research_conformal_paired_statistics.json").is_file()
+    assert (output / "research_conformal_slice_scenario.csv").is_file()
     assert (output / "research_conformal_validation.csv").is_file()
     assert (output / "research_conformal_final_tests.csv").is_file()
     assert "seen:support_guarded_vs_proposed" in summary["clustered_statistics"]

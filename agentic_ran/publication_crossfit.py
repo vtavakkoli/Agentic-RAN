@@ -40,6 +40,9 @@ from agentic_ran.publication_science import (
 )
 from agentic_ran.publication_v2 import PubConfig, fit_cql, fit_fqi, shortcut
 from agentic_ran.publication_support import StateConditionalSupportAudit
+from agentic_ran.selective_evidence import (
+    accounting_summary, combine_chunks, paired_cluster_inference,
+)
 
 COMMON_SUPPORT_GATE = 0.80
 MIN_COMMON_ACTIONS_PER_SLICE = 2
@@ -346,6 +349,8 @@ def run_crossfit_benchmark(
     conformal_selection = []
     conformal_validation = []
     conformal_tests = []
+    conformal_cluster_rows = []
+    conformal_slice_rows = []
     fold_baselines: list[pd.DataFrame] = []
     decision_tables: list[pd.DataFrame] = []
     comparison_models = ["proposed", "fqi", "cql_linear", "behavior_hgb"]
@@ -446,10 +451,13 @@ def run_crossfit_benchmark(
                 bundle, evaluator, policy_fit, ope_fit, validation_fold,
                 seen_fold, unseen_fold, calibrated,
                 seed=seed + 12000 + fold_index, fold=fold_name,
+                switch_margin=switch_margin,
             )
             conformal_selection.append(trial["selection"])
             conformal_validation.extend(trial["validation_grid"])
             conformal_tests.extend(trial["final_tests"])
+            conformal_cluster_rows.extend(trial["cluster_evidence"])
+            conformal_slice_rows.extend(trial["slice_scenario"])
 
         for split_name, test in (("seen", seen_fold), ("unseen", unseen_fold)):
             fold_ablations: list[dict[str, Any]] = []
@@ -515,6 +523,36 @@ def run_crossfit_benchmark(
 
     baselines = _aggregate_baselines(fold_baselines)
     decisions = pd.concat(decision_tables, ignore_index=True)
+    conformal_clustered = {}
+    conformal_accounting = {}
+    if conformal_rerank_enabled:
+        if not conformal_cluster_rows:
+            raise RuntimeError("conformal evidence was enabled but no clusters were exported")
+        for split_index, (split, source) in enumerate(
+            (("seen", seen), ("unseen", unseen))
+        ):
+            records = [
+                row for row in conformal_cluster_rows if row["split"] == split
+            ]
+            # Additive accounting across fold-specific, bounded-size batches.
+            grouped = combine_chunks(records)
+            if int(grouped["rows"].sum()) != len(source):
+                raise RuntimeError(
+                    f"conformal {split} accounting does not cover final rows once"
+                )
+            conformal_accounting[split] = accounting_summary(grouped)
+            conformal_clustered[split] = {
+                estimand: paired_cluster_inference(
+                    grouped, estimand,
+                    seed=seed + 20000 + split_index * 20 + j,
+                    bootstrap_samples=science.bootstrap_samples,
+                    permutation_samples=science.permutation_samples,
+                )
+                for j, estimand in enumerate((
+                    "fixed_penalty", "hold_incumbent_dm",
+                    "observed_logged_hold_proxy",
+                ))
+            }
     ablations = pd.DataFrame(ablation_rows)
     state_overlap = pd.DataFrame(state_overlap_rows)
     overlap_summary = {}
@@ -686,6 +724,13 @@ def run_crossfit_benchmark(
     }
     if conformal_rerank_enabled:
         warnings.append(
+            "Conformal comparison now uses episode-blocked calibrations and "
+            "paired cluster summaries. Its abstention cases are assessed via "
+            "explicit model-based holding and observational sensitivity "
+            "analyses. Neither identifies the effect of doing nothing in a "
+            "live RAN."
+        )
+        warnings.append(
             "Research conformal re-ranking is secondary evidence and may "
             "abstain. Selected-action utility and SLA are conditional direct-method "
             "estimates. The critic SLA prediction is NOT a calibrated upper "
@@ -771,10 +816,27 @@ def run_crossfit_benchmark(
         "state_conditional_overlap": overlap_summary,
         "research_conformal_rerank": {
             "enabled": conformal_rerank_enabled,
+            "research_evidence_status": (
+                "OFFLINE-ANALYSIS-ONLY" if conformal_rerank_enabled
+                else "NOT-RUN"
+            ),
+            "abstention_outcomes": {
+                "fixed_penalty": "assumed -0.12",
+                "hold_incumbent_dm": "OPE only where common-action support exists",
+                "observed_logged_hold_proxy": "observational only when logged action equals incumbent",
+            },
+            "paired_cluster_statistics": conformal_clustered,
+            "paired_accounting": conformal_accounting,
+            "conformal_calibration_unit": "held_out_episode_maximum",
             "validation_only_selection": True,
             "fail_closed_no_action": True,
             "claim_scope": "simulated/offline candidate-ranking diagnostic, not network safety",
             "selections": conformal_selection,
+            "publication_ready": False,
+            "reason": (
+                "no closed-loop RAN validation; abstention outcomes are "
+                "sensitivity estimates, not identified causal interventions"
+            ),
         },
         "experimental_matched_wrappers": {
             "enabled": matched_wrappers_enabled,
@@ -824,6 +886,17 @@ def run_crossfit_benchmark(
     calibration = pd.concat(calibration_tables, ignore_index=True)
     cql_validation = pd.concat(cql_tables, ignore_index=True)
     if conformal_rerank_enabled:
+        pd.DataFrame(conformal_cluster_rows).to_csv(
+            destination / "research_conformal_cluster_evidence.csv",
+            index=False,
+        )
+        pd.DataFrame(conformal_slice_rows).to_csv(
+            destination / "research_conformal_slice_scenario.csv",
+            index=False,
+        )
+        (destination / "research_conformal_paired_statistics.json").write_text(
+            json.dumps(conformal_clustered, indent=2), encoding="utf-8",
+        )
         pd.DataFrame(conformal_validation).to_csv(
             destination / "research_conformal_validation.csv", index=False
         )
