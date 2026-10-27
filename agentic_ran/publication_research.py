@@ -224,13 +224,30 @@ def run_optional_conformal_fold(
     residuals = observed[available] - critic[
         np.flatnonzero(available), logged[available]
     ]
-    residuals = residuals[np.isfinite(residuals)]
-    if not len(residuals):
-        # Nothing can be certified even under observational calibration.
+    episode_for_residual = targets.loc[
+        available, "episode_id"
+    ].astype(str).to_numpy()
+    finite_residual = np.isfinite(residuals)
+    residuals = residuals[finite_residual]
+    episode_for_residual = episode_for_residual[finite_residual]
+    # One worst-case residual per independent episode, instead of treating
+    # correlated 250-ms/1-s observations as independent calibration units.
+    blocked_residuals = np.array([
+        np.max(residuals[episode_for_residual == ep])
+        for ep in np.unique(episode_for_residual)
+    ])
+    if len(blocked_residuals) < 19:
+        # 95% one-sided bound needs at least 19 independent calibration units.
+        # The safe response to too few episodes is to disable actuation.
         margin = float("inf")
     else:
-        quantile = min(1.0, np.ceil((len(residuals) + 1) * 0.95) / len(residuals))
-        margin = max(0.0, float(np.quantile(residuals, quantile, method="higher")))
+        quantile = min(
+            1.0, np.ceil((len(blocked_residuals) + 1) * 0.95)
+            / len(blocked_residuals),
+        )
+        margin = max(0.0, float(
+            np.quantile(blocked_residuals, quantile, method="higher")
+        ))
     grid = []
     for method in ("knn", "gaussian", "gmm"):
         for alpha in (0.01, 0.05, 0.10, 0.20):
@@ -279,6 +296,8 @@ def run_optional_conformal_fold(
             "selection_episodes": len(shuffled[pivot:]),
             "logged_action_sla_residual_margin": margin,
             "logged_residual_count": len(residuals),
+            "residual_calibration_episode_count": len(blocked_residuals),
+            "residual_calibration_protocol": "episode_maximum_95pct",
             "support_fit_on": "training_experiment_roles_only",
             "support_calibration_protocol": support.calibration_protocol,
             "support_calibration_units": {
