@@ -79,6 +79,54 @@ counterfactual utility on all test rows. Selective-policy conditional utility
 is not numerically comparable with unconditional utility unless an explicit,
 justified no-actuation outcome is specified.
 
+## October 27 evidence upgrade: accountable abstention and paired inference
+
+The optional COMMAG comparison now exports more than accepted-only utility:
+
+- The **fixed-penalty** sensitivity uses an explicitly assumed abstention
+  score of -0.12, and remains an arbitrary decision-accounting convention.
+- The **hold-incumbent direct-method** estimand estimates the incumbent's
+  utility *using the independent evaluator* only where its scheduler/PRB action
+  has common model support. Missing support remains missing and is excluded
+  from this paired comparison rather than imputed optimistically.
+- The **observed logged-incumbent** proxy uses the logged observed outcome only
+  when the logged action matches the incumbent. This deliberately mixes
+  observed and model-based outcomes and is *descriptive, not causal*.
+- All comparisons use the **same final-test rows/experimental clusters** and
+  export paired cluster-bootstrap 95% CIs, sign-permutation p-values, matched
+  row coverage, and counts. Cluster units are scenario × training configuration
+  × experiment; experiment-role swapping and held-out selection remain intact.
+- Candidate support uses **episode-blocked fit/calibration** and episode-level
+  maximum nonconformity scores. SLA residual margins are also calibrated
+  from episode maxima. Low alpha is rejected when too few independent
+  calibration episodes exist. This can increase abstention dramatically; no
+  superior utility is promised.
+- This cannot establish conformal guarantees on temporally dependent,
+  nonexchangeable action-conditional distributions, causal effect estimates,
+  real-time RIC performance, or certified execution safety.
+
+New output artifacts:
+
+\`\`\`text
+results/publication/research_conformal_cluster_evidence.csv
+results/publication/research_conformal_slice_scenario.csv
+results/publication/research_conformal_paired_statistics.json
+\`\`\`
+
+The JSON under \`research_conformal_rerank\` now exposes the estimands, coverage,
+research limitations, and explicitly marks \`publication_ready: false\`.
+The legacy 14 generic readiness gates remain separate: they do not certify
+novel conformal control, blocked calibration guarantees, or live actuation.
+
+### World-model planning stress test
+
+Use \`python -m agentic_ran.research_benchmark --oracle-gap --episodes 12\`
+to compare learned vs *oracle* model-predictive control over horizons 1, 2,
+and 4 on common randomized disturbance sequences. The MPC safety-margin
+penalty uses held-out learned-model error rather than leaking the injected
+experimental bias. This remains a deliberately simplified queue/spectrum
+simulator, **not** Colosseum/SCOPE or 3GPP-calibrated control.
+
 ## What must still be done for publication
 
 1. Replace random point-wise conformal calibration inside training roles with
