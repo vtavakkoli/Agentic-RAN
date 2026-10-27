@@ -105,7 +105,16 @@ class ConformalActionSupport:
                     if len(fit_idx) < 8 or len(cal_idx) < 8:
                         continue
                     fit_idx = rng.permutation(fit_idx)[:self.max_reference]
-                    cal_idx = rng.permutation(cal_idx)[:self.max_reference]
+                    # Calibrate on complete held-out episodes, never on a
+                    # randomly thinned set of rows within an episode.
+                    cal_episodes = np.unique(episodes[cal_idx])
+                    if len(cal_episodes) > self.max_reference:
+                        cal_episodes = rng.permutation(cal_episodes)[
+                            :self.max_reference
+                        ]
+                        cal_idx = cal_idx[np.isin(
+                            episodes[cal_idx], cal_episodes,
+                        )]
                 else:
                     idx = rng.permutation(idx)[:self.max_reference]
                     n_cal = max(8, int(len(idx) * self.calibration_fraction))
