@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from agentic_ran.research_planning import evaluate_planners
+from agentic_ran.research_planning import evaluate_planners, evaluate_oracle_gap
 from agentic_ran.research_support import ConformalActionSupport, rerank
 
 ACTION_NAMES = (
@@ -155,11 +155,17 @@ def main(argv=None):
     parser.add_argument("--output", default="results/research_methods.json")
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--episodes", type=int, default=12)
+    parser.add_argument("--oracle-gap", action="store_true",
+                        help="also compare learned MPC to a toy-model oracle")
     args = parser.parse_args(argv)
     result = {
         "support": evaluate_support(seed=args.seed),
         "planning": evaluate_planners(seed=args.seed, episodes=args.episodes),
     }
+    if args.oracle_gap:
+        result["oracle_gap"] = evaluate_oracle_gap(
+            seed=args.seed, episodes=args.episodes,
+        )
     path = Path(args.output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result, indent=2), encoding="utf-8")
