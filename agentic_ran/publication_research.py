@@ -110,12 +110,21 @@ def _actions_and_metrics(
             eval_idx = np.array([mapping.get(str(incumbents[i]), -1) for i in local])
             valid = eval_idx >= 0
             incumbent_dm[local[valid]] = dm[local[valid], eval_idx[valid]]
+        incumbent_positions = np.maximum(incumbent_idx, 0)
+        row_positions = np.arange(len(chunk))
+        # A prospective hold action is evaluated only if it passes the SAME
+        # policy-side SLA/uncertainty/OOD and two-role support mask as an
+        # issued proposal. These are model-based gates, not real safety proof.
         incumbent_ok = (
             np.isfinite(incumbent_dm)
             & evaluator.supported(chunk, incumbents)
-            & pre["allowed"][
-                np.arange(len(chunk)), np.maximum(incumbent_idx, 0)
-            ]
+            & allowed[row_positions, incumbent_positions]
+            & p[row_positions, incumbent_positions]
+            & (sla[row_positions, incumbent_positions] <= config.sla_threshold)
+            & (
+                uncertainty[row_positions, incumbent_positions]
+                <= config.uncertainty_threshold
+            )
         )
         hold = ~keep
         supported_hold = hold & incumbent_ok
