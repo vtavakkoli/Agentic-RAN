@@ -114,3 +114,22 @@ def test_cross_role_episode_leakage_is_rejected():
     }
     with pytest.raises(ValueError, match="overlap"):
         ConformalActionSupport().fit(roles)
+
+
+def test_robust_mpc_margin_and_oracle_gap_smoke():
+    from agentic_ran.research_planning import (
+        ACTIONS, OracleDynamics, evaluate_oracle_gap, plan,
+    )
+    model = OracleDynamics()
+    state = np.array([2.0, 1.0, 0.85])
+    for horizon in (1, 2, 4):
+        assert plan(state, float(ACTIONS[1]), 0, horizon, model) in (-1, 0, 1, 2)
+    with pytest.raises(ValueError, match="risk_margin_z"):
+        plan(state, 0.7, 0, 2, model, risk_margin_z=-1)
+    report = evaluate_oracle_gap(seed=3, episodes=2, steps=3, horizons=(1, 2))
+    assert report["learned_transition_holdout_rmse"] >= 0
+    assert set(report["results"]) == {
+        "learned:h=1", "learned:h=2", "oracle:h=1", "oracle:h=2",
+    }
+    for result in report["results"].values():
+        assert 0 <= result["violation_rate"] <= 1
