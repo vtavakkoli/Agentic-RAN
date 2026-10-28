@@ -723,6 +723,17 @@ def run_crossfit_benchmark(
         "support": "slice-level action overlap plus a sampled state-conditional diagnostic; no causal guarantee",
     }
     if conformal_rerank_enabled:
+        if any(not x.get("validation_feasible", False) for x in conformal_selection):
+            warnings.append(
+                "Conformal model selection found NO validation candidate with "
+                "at least 5% action coverage in one or more folds. Its selected "
+                "diagnostic method must not be called a functioning controller."
+            )
+        warnings.append(
+            "The selective SLA gate now calibrates an episode-MEAN logged-action "
+            "residual, not a worst-step bound. It supports offline average-risk "
+            "screening only, and cannot certify per-action or per-step safety."
+        )
         warnings.append(
             "Conformal comparison now uses episode-blocked calibrations and "
             "paired cluster summaries. Its abstention cases are assessed via "
@@ -828,6 +839,11 @@ def run_crossfit_benchmark(
             "paired_cluster_statistics": conformal_clustered,
             "paired_accounting": conformal_accounting,
             "conformal_calibration_unit": "held_out_episode_maximum",
+            "sla_calibration_estimand": "logged_action_episode_mean_residual_95pct",
+            "all_validation_folds_feasible": (
+                all(x.get("validation_feasible", False) for x in conformal_selection)
+                if conformal_rerank_enabled else False
+            ),
             "validation_only_selection": True,
             "fail_closed_no_action": True,
             "claim_scope": "simulated/offline candidate-ranking diagnostic, not network safety",
