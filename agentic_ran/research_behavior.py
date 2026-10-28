@@ -93,13 +93,15 @@ def stable_uniforms(frame: pd.DataFrame, *, seed: int) -> np.ndarray:
         raise ValueError("need stable pre-decision row identity for Boltzmann sampling")
     hashed = pd.util.hash_pandas_object(
         frame[columns].astype(str), index=False,
-    ).to_numpy(dtype=np.uint64)
+    ).to_numpy(dtype=np.uint64).copy()
     hashed ^= np.uint64(seed)
-    # SplitMix64 integer scrambling; no dependence on array chunking.
-    hashed = hashed + np.uint64(0x9E3779B97F4A7C15)
-    hashed = (hashed ^ (hashed >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
-    hashed = (hashed ^ (hashed >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
-    hashed ^= hashed >> np.uint64(31)
+    # SplitMix64 integer scrambling; uint64 overflow is intentional.
+    # An explicit writable copy is necessary with recent pandas versions.
+    with np.errstate(over="ignore"):
+        hashed = hashed + np.uint64(0x9E3779B97F4A7C15)
+        hashed = (hashed ^ (hashed >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
+        hashed = (hashed ^ (hashed >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
+        hashed ^= hashed >> np.uint64(31)
     return ((hashed >> np.uint64(11)).astype(float) + 0.5) / 2**53
 
 
