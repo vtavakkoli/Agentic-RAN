@@ -170,6 +170,73 @@ or that action safety is validated by the logged-action residual margin.
 Full-scale tests must establish risk, utility, coverage, latency, cluster CIs
 and deployment applicability before selecting a paper headline.
 
+## October 29: Boltzmann and behavior-guided offline controller study
+
+An optional independent study compares four controllers against the existing
+conformal re-ranker **under exactly the same supported action candidates and
+logged-action episode-mean SLA, uncertainty and OOD gates**:
+
+| Experimental controller | Decision rule |
+| --- | --- |
+| Boltzmann / softmax | Sample a supported action from a seeded, per-row reproducible Gibbs distribution over predicted immediate utility |
+| Behavior cloning | Choose highest learned logged-behavior probability among eligible supported actions |
+| Behavior-regularized Gibbs MAP | Choose highest utility *and* behavior likelihood using log p_behavior + utility / temperature, motivated by KL-constrained offline policy improvement |
+| Behavior-tree safety supervisor | First prefer a fully eligible incumbent within a tunable utility margin; else choose the best supported and sufficiently likely action; else abstain |
+
+The behavior model is a shallow, bounded-data HistGradientBoostingClassifier,
+trained **only on the policy-fit experiment role** using six decision-context
+features and slice type (never post-action targets or independent evaluator
+outcomes). Missing-action probabilities are zero. Temperature, behavior prior
+weight, minimum behavior likelihood, and hysteresis margins are selected using
+**seen validation only**. The full seen and unseen test sets remain untouched
+until after selection. Boltzmann policy sampling uses a fixed seed and
+pre-decision row identifiers, and does not depend on batch size.
+
+This work is **not** a reproduction of the cited papers, and a Gibbs policy
+built from entropy regularization is not itself novel.
+
+Run it in PowerShell:
+
+\`\`\`powershell
+cd Agentic-RAN
+git pull --ff-only
+$env:AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS = "1"
+$env:AGENTIC_RAN_EVAL_MATCHED_WRAPPERS = "1"
+$env:AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD = "1"
+$env:LOCAL_UID = "1000"
+$env:LOCAL_GID = "1000"
+docker compose -f docker-compose.publication.yml up --build --force-recreate publication-test
+\`\`\`
+
+Setting \`AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS=1\` implicitly enables the
+conformal experimental comparison as the shared candidate mask.
+
+Additional data files:
+- \`research_behavior_validation.csv\` (validation search, method-specific parameters)
+- \`research_behavior_final_tests.csv\` (each method on held-out seen/unseen splits)
+- \`research_behavior_cluster_evidence.csv\` (per-cluster matched outcomes)
+- \`research_behavior_slice_scenario.csv\` (scenario/slice actuation coverage)
+- \`research_behavior_paired_statistics.json\` (cluster bootstrap and paired tests)
+
+The \`research_behavior_variants\` summary group is kept separate from the
+legacy model leaderboard because the selective policies have abstentions and
+therefore **conditional utility is not directly comparable** with unconditional
+baseline utility. Fixed abstention penalty -0.12 is only a sensitivity
+scenario, NOT a known RAN cost. Behavior-prior probabilities are not causal
+behavior propensities when actions were configured statically. Boltzmann
+stochastic selection is not recommended for production without interaction
+studies. No online network performance or certified SLA safety is claimed.
+
+Literature inspirations:
+- Lin et al. (August 2026), *Decoupling Policy Extraction for Offline
+  Reinforcement Learning*, https://arxiv.org/abs/2608.20909
+- Cao et al. (July 2026), *Entropy Regularization Improves Policy Robustness
+  in Continuous-Time Reinforcement Learning*, https://arxiv.org/abs/2607.03168
+- Dong et al. (February 2026), *Proximal Action Replacement for Behavior
+  Cloning Actor-Critic*, https://arxiv.org/abs/2602.07441
+- Mao et al. (November 2025), *Adaptive Neighborhood-Constrained Q
+  Learning*, https://arxiv.org/abs/2511.02567
+
 ## What must still be done for publication
 
 1. Replace random point-wise conformal calibration inside training roles with

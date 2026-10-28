@@ -343,14 +343,24 @@ def run_crossfit_benchmark(
     matched_wrappers_enabled = (
         os.environ.get("AGENTIC_RAN_EVAL_MATCHED_WRAPPERS", "0") == "1"
     )
+    behavior_variants_enabled = (
+        os.environ.get("AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS", "0") == "1"
+    )
     conformal_rerank_enabled = (
         os.environ.get("AGENTIC_RAN_EVAL_CONFORMAL_RERANK", "0") == "1"
+        or behavior_variants_enabled
     )
     conformal_selection = []
     conformal_validation = []
     conformal_tests = []
     conformal_cluster_rows = []
     conformal_slice_rows = []
+    behavior_validation_rows = []
+    behavior_test_rows = []
+    behavior_cluster_rows = []
+    behavior_slice_rows = []
+    behavior_selection_rows = []
+    behavior_meta_selection = []
     fold_baselines: list[pd.DataFrame] = []
     decision_tables: list[pd.DataFrame] = []
     comparison_models = ["proposed", "fqi", "cql_linear", "behavior_hgb"]
@@ -452,12 +462,24 @@ def run_crossfit_benchmark(
                 seen_fold, unseen_fold, calibrated,
                 seed=seed + 12000 + fold_index, fold=fold_name,
                 switch_margin=switch_margin,
+                behavior_variants_enabled=behavior_variants_enabled,
             )
             conformal_selection.append(trial["selection"])
             conformal_validation.extend(trial["validation_grid"])
             conformal_tests.extend(trial["final_tests"])
             conformal_cluster_rows.extend(trial["cluster_evidence"])
             conformal_slice_rows.extend(trial["slice_scenario"])
+            if behavior_variants_enabled:
+                extra = trial["behavior_variants"]
+                behavior_validation_rows.extend(extra["validation_grid"])
+                behavior_test_rows.extend(extra["final_tests"])
+                behavior_cluster_rows.extend(extra["cluster_evidence"])
+                behavior_slice_rows.extend(extra["slice_scenario"])
+                behavior_selection_rows.extend(extra["selections"])
+                behavior_meta_selection.append({
+                    "fold": fold_name, "selected_mode": extra["meta_selected_mode"],
+                    "selection_scope": extra["meta_selection_scope"],
+                })
 
         for split_name, test in (("seen", seen_fold), ("unseen", unseen_fold)):
             fold_ablations: list[dict[str, Any]] = []
@@ -553,6 +575,36 @@ def run_crossfit_benchmark(
                     "observed_logged_hold_proxy",
                 ))
             }
+    behavior_comparisons = {}
+    if behavior_variants_enabled:
+        from agentic_ran.research_behavior import MODES
+        for mode in MODES:
+            behavior_comparisons[mode] = {}
+            for i, (split, source) in enumerate((("seen", seen), ("unseen", unseen))):
+                cells = [
+                    row for row in behavior_cluster_rows
+                    if row["split"] == split and row["mode"] == mode
+                ]
+                grouped = combine_chunks(cells)
+                if grouped.empty or int(grouped["rows"].sum()) != len(source):
+                    raise RuntimeError(
+                        f"behavior {mode}/{split} evidence does not cover all test rows"
+                    )
+                behavior_comparisons[mode][split] = {
+                    "accounting": accounting_summary(grouped),
+                    "paired": {
+                        estimand: paired_cluster_inference(
+                            grouped, estimand,
+                            seed=seed + 25000 + i * 100 + MODES.index(mode) * 10 + j,
+                            bootstrap_samples=science.bootstrap_samples,
+                            permutation_samples=science.permutation_samples,
+                        )
+                        for j, estimand in enumerate((
+                            "fixed_penalty", "hold_incumbent_dm",
+                            "observed_logged_hold_proxy",
+                        ))
+                    },
+                }
     ablations = pd.DataFrame(ablation_rows)
     state_overlap = pd.DataFrame(state_overlap_rows)
     overlap_summary = {}
@@ -825,6 +877,20 @@ def run_crossfit_benchmark(
         "claim_scope": claim_scope,
         "tradeoff_summary": tradeoffs,
         "state_conditional_overlap": overlap_summary,
+        "research_behavior_variants": {
+            "enabled": behavior_variants_enabled,
+            "modes": (
+                ["boltzmann", "behavior_clone", "behavior_kl", "behavior_tree"]
+                if behavior_variants_enabled else []
+            ),
+            "training_role": "policy_fit_only",
+            "test_policy": "matched_conformal_support_and_sla_uncertainty_ood_gates",
+            "validation_selections": behavior_selection_rows,
+            "meta_selection": behavior_meta_selection,
+            "paired_evidence": behavior_comparisons,
+            "performance_claim": "offline direct-method estimates, not causal outcomes",
+            "publication_ready": False,
+        },
         "research_conformal_rerank": {
             "enabled": conformal_rerank_enabled,
             "research_evidence_status": (
@@ -901,6 +967,22 @@ def run_crossfit_benchmark(
 
     calibration = pd.concat(calibration_tables, ignore_index=True)
     cql_validation = pd.concat(cql_tables, ignore_index=True)
+    if behavior_variants_enabled:
+        pd.DataFrame(behavior_validation_rows).to_csv(
+            destination / "research_behavior_validation.csv", index=False,
+        )
+        pd.DataFrame(behavior_test_rows).to_csv(
+            destination / "research_behavior_final_tests.csv", index=False,
+        )
+        pd.DataFrame(behavior_cluster_rows).to_csv(
+            destination / "research_behavior_cluster_evidence.csv", index=False,
+        )
+        pd.DataFrame(behavior_slice_rows).to_csv(
+            destination / "research_behavior_slice_scenario.csv", index=False,
+        )
+        (destination / "research_behavior_paired_statistics.json").write_text(
+            json.dumps(behavior_comparisons, indent=2), encoding="utf-8",
+        )
     if conformal_rerank_enabled:
         pd.DataFrame(conformal_cluster_rows).to_csv(
             destination / "research_conformal_cluster_evidence.csv",

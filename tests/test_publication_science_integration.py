@@ -141,6 +141,7 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     monkeypatch.setenv("AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_MATCHED_WRAPPERS", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_CONFORMAL_RERANK", "1")
+    monkeypatch.setenv("AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS", "1")
     data = tmp_path / "synthetic.csv.gz"
     output = tmp_path / "publication"
     _synthetic_publication_frame().to_csv(data, index=False, compression="gzip")
@@ -227,6 +228,27 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     assert (output / "research_conformal_slice_scenario.csv").is_file()
     assert (output / "research_conformal_validation.csv").is_file()
     assert (output / "research_conformal_final_tests.csv").is_file()
+    behavior = summary["research_behavior_variants"]
+    assert behavior["enabled"]
+    assert set(behavior["modes"]) == {
+        "boltzmann", "behavior_clone", "behavior_kl", "behavior_tree",
+    }
+    assert len(behavior["meta_selection"]) == 2
+    assert all(
+        value["selected_mode"] in behavior["modes"] + [None]
+        for value in behavior["meta_selection"]
+    )
+    for mode in behavior["modes"]:
+        for split in ("seen", "unseen"):
+            assert behavior["paired_evidence"][mode][split]["accounting"]["rows"] > 0
+    assert (output / "research_behavior_validation.csv").is_file()
+    assert (output / "research_behavior_final_tests.csv").is_file()
+    assert (output / "research_behavior_cluster_evidence.csv").is_file()
+    assert (output / "research_behavior_paired_statistics.json").is_file()
+    tests = pd.read_csv(output / "research_behavior_final_tests.csv")
+    assert set(tests["mode"]) == set(behavior["modes"])
+    assert len(tests) == 2 * 2 * len(behavior["modes"])
+
     assert "seen:support_guarded_vs_proposed" in summary["clustered_statistics"]
     assert "unseen:proposed_vs_fqi_matched" in summary["clustered_statistics"]
     report = (output / "report.html").read_text(encoding="utf-8")
