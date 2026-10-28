@@ -233,6 +233,11 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     assert set(behavior["modes"]) == {
         "boltzmann", "behavior_clone", "behavior_kl", "behavior_tree",
     }
+    assert len(behavior["meta_selection"]) == 2
+    assert all(
+        value["selected_mode"] in behavior["modes"] + [None]
+        for value in behavior["meta_selection"]
+    )
     for mode in behavior["modes"]:
         for split in ("seen", "unseen"):
             assert behavior["paired_evidence"][mode][split]["accounting"]["rows"] > 0
