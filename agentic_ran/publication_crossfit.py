@@ -360,6 +360,7 @@ def run_crossfit_benchmark(
     behavior_cluster_rows = []
     behavior_slice_rows = []
     behavior_selection_rows = []
+    behavior_meta_selection = []
     fold_baselines: list[pd.DataFrame] = []
     decision_tables: list[pd.DataFrame] = []
     comparison_models = ["proposed", "fqi", "cql_linear", "behavior_hgb"]
@@ -475,6 +476,10 @@ def run_crossfit_benchmark(
                 behavior_cluster_rows.extend(extra["cluster_evidence"])
                 behavior_slice_rows.extend(extra["slice_scenario"])
                 behavior_selection_rows.extend(extra["selections"])
+                behavior_meta_selection.append({
+                    "fold": fold_name, "selected_mode": extra["meta_selected_mode"],
+                    "selection_scope": extra["meta_selection_scope"],
+                })
 
         for split_name, test in (("seen", seen_fold), ("unseen", unseen_fold)):
             fold_ablations: list[dict[str, Any]] = []
@@ -881,6 +886,7 @@ def run_crossfit_benchmark(
             "training_role": "policy_fit_only",
             "test_policy": "matched_conformal_support_and_sla_uncertainty_ood_gates",
             "validation_selections": behavior_selection_rows,
+            "meta_selection": behavior_meta_selection,
             "paired_evidence": behavior_comparisons,
             "performance_claim": "offline direct-method estimates, not causal outcomes",
             "publication_ready": False,
