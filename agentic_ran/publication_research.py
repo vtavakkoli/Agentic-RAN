@@ -395,6 +395,10 @@ def run_optional_conformal_fold(
                 "support_method": winner["method"],
                 "support_alpha": winner["alpha"],
                 "training_prior_rows": behavior_model.policy_rows,
+                "validation_objective": (
+                    best["hold_incumbent_dm_sensitivity_score"]
+                    - 0.01 * best["abstention_rate"]
+                ),
                 "hyperparameters": chosen_hyper,
                 "selection_scope": "seen_validation_only; no final-test tuning",
             })
@@ -421,6 +425,14 @@ def run_optional_conformal_fold(
                     "support_alpha": winner["alpha"],
                     **chosen_hyper, **metrics,
                 })
+    # A separate, predeclared meta-selector chooses the best among the
+    # *validation-feasible* controller families. This choice is frozen before
+    # any held-out result is used; do not declare a winner from final tests.
+    eligible_modes = [x for x in behavior_selections if x["validated"]]
+    meta_selected = (
+        max(eligible_modes, key=lambda x: x["validation_objective"])["mode"]
+        if eligible_modes else None
+    )
     for name, frame in (("seen", seen), ("unseen", unseen)):
         metrics = _actions_and_metrics(
             support, bundle, evaluator, frame, config,
@@ -482,5 +494,7 @@ def run_optional_conformal_fold(
             "cluster_evidence": behavior_cluster_rows,
             "slice_scenario": behavior_slice_rows,
             "selections": behavior_selections,
+            "meta_selected_mode": meta_selected,
+            "meta_selection_scope": "seen_validation_only_before_final_test",
         },
     }
