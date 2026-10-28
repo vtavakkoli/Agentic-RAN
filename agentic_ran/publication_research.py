@@ -19,6 +19,9 @@ from agentic_ran.publication_science import _choose_from_precomputed, _policy_pr
 from agentic_ran.selective_evidence import cluster_accounting, combine_chunks, accounting_summary
 from agentic_ran.publication_support import CONTEXT_COLUMNS
 from agentic_ran.research_support import ConformalActionSupport, rerank
+from agentic_ran.research_behavior import (
+    MODES, BehaviorPrior, select_behavior, stable_uniforms,
+)
 
 
 def _eligible_inputs(bundle, frame: pd.DataFrame, config: StudyConfig):
@@ -47,6 +50,10 @@ def _actions_and_metrics(
     config: StudyConfig, method: str, alpha: float,
     *, sla_residual_margin: float = 0.0, batch_size: int = 16384,
     collect_clusters: bool = False, switch_margin: float = 0.0,
+    behavior_mode: str | None = None, behavior_model: BehaviorPrior | None = None,
+    temperature: float = 0.06, behavior_weight: float = 0.5,
+    behavior_floor: float = 0.02, hold_margin: float = 0.02,
+    random_seed: int = 2026,
 ):
     """Paired evaluation with three explicitly distinct abstention estimands.
 
@@ -68,6 +75,7 @@ def _actions_and_metrics(
     }
     evidence_rows = []
     breakdown = []
+    total_entropy = 0.0
     for start in range(0, n, batch_size):
         chunk = frame.iloc[start:start + batch_size]
         scores, sla, uncertainty, allowed, pre = _eligible_inputs(bundle, chunk, config)
@@ -94,17 +102,38 @@ def _actions_and_metrics(
         gate_totals["sla_and_uncertainty_rows"] += int(np.any(allowed & risk_ok, axis=1).sum())
         gate_totals["conditional_support_rows"] += int(np.any(allowed & p, axis=1).sum())
         gate_totals["joint_eligible_rows"] += int(np.any(eligible, axis=1).sum())
-        decisions = rerank(
-            scores, sla, uncertainty, allowed, p, incumbent_idx,
-            method=method, alpha=alpha, max_sla=config.sla_threshold,
-            max_uncertainty=config.uncertainty_threshold,
-            switch_cost=0.01,
-        )
+        if behavior_mode is None:
+            decisions = rerank(
+                scores, sla, uncertainty, allowed, p, incumbent_idx,
+                method=method, alpha=alpha, max_sla=config.sla_threshold,
+                max_uncertainty=config.uncertainty_threshold,
+                switch_cost=0.01,
+            )
+            changed = decisions.reranked
+        else:
+            if behavior_model is None:
+                raise ValueError("behavior model required for experimental controller")
+            decisions = select_behavior(
+                scores, sla, uncertainty, allowed, p,
+                behavior_model.probabilities(chunk), incumbent_idx,
+                mode=behavior_mode, temperature=temperature,
+                behavior_weight=behavior_weight, min_behavior_prob=behavior_floor,
+                max_sla=config.sla_threshold,
+                max_uncertainty=config.uncertainty_threshold,
+                switch_cost=0.01, hold_margin=hold_margin,
+                uniforms=(
+                    stable_uniforms(chunk, seed=random_seed)
+                    if behavior_mode == "boltzmann" else None
+                ),
+            )
+            original = np.argmax(np.where(allowed, scores, -np.inf), axis=1)
+            changed = (~decisions.abstain) & (decisions.actions != original)
+            total_entropy += float(np.sum(decisions.probability_entropy))
         keep = ~decisions.abstain
         ok = np.flatnonzero(keep)
         counted += len(chunk)
         accepted += len(ok)
-        reranked += int(decisions.reranked.sum())
+        reranked += int(changed.sum())
         sum_eligible += float(decisions.eligible_counts.sum())
         ope = evaluator.predict_all(chunk)
         weight = config.sla_weight + config.energy_weight + config.stability_weight
@@ -189,6 +218,8 @@ def _actions_and_metrics(
         "abstention_rate": 1 - accepted / max(counted, 1),
         "rerank_rate": reranked / max(counted, 1),
         "mean_eligible_actions": sum_eligible / max(counted, 1),
+        "policy_variant": behavior_mode or "conformal_rerank",
+        "mean_action_entropy": total_entropy / max(counted, 1),
         "gate_slice_ood_coverage": gate_totals["slice_and_ood_rows"] / max(counted, 1),
         "gate_predicted_risk_coverage": gate_totals["sla_and_uncertainty_rows"] / max(counted, 1),
         "gate_support_coverage": gate_totals["conditional_support_rows"] / max(counted, 1),
@@ -221,6 +252,7 @@ def run_optional_conformal_fold(
     seen: pd.DataFrame, unseen: pd.DataFrame,
     config: StudyConfig, *, seed: int, fold: str,
     switch_margin: float = 0.0,
+    behavior_variants_enabled: bool = False,
 ):
     roles = {
         role: (
@@ -304,6 +336,91 @@ def run_optional_conformal_fold(
     results = []
     clusters = []
     slices = []
+    behavior_validation = []
+    behavior_tests = []
+    behavior_cluster_rows = []
+    behavior_slice_rows = []
+    behavior_selections = []
+    behavior_model = None
+    if behavior_variants_enabled:
+        behavior_model = BehaviorPrior.fit(
+            policy_fit, bundle.actions, seed=seed + 9001,
+        )
+        variants = {
+            "boltzmann": [
+                {"temperature": t} for t in (0.025, 0.06, 0.12)
+            ],
+            "behavior_clone": [{}],
+            "behavior_kl": [
+                {"temperature": t, "behavior_weight": w}
+                for t in (0.035, 0.09) for w in (0.25, 0.75)
+            ],
+            "behavior_tree": [
+                {"behavior_floor": floor, "hold_margin": margin}
+                for floor in (0.01, 0.05) for margin in (0.01, 0.04)
+            ],
+        }
+        for mode, grid_options in variants.items():
+            candidates = []
+            for hyper in grid_options:
+                metrics = _actions_and_metrics(
+                    support, bundle, evaluator, selection_frame, config,
+                    winner["method"], winner["alpha"],
+                    sla_residual_margin=margin,
+                    behavior_mode=mode, behavior_model=behavior_model,
+                    random_seed=seed + 9002, **hyper,
+                )
+                item = {
+                    "fold": fold, "split": "validation",
+                    "mode": mode, "support_method": winner["method"],
+                    "support_alpha": winner["alpha"], **hyper, **metrics,
+                }
+                candidates.append(item)
+                behavior_validation.append(item)
+            feasible = [item for item in candidates if item["coverage"] >= 0.05]
+            pool = feasible or candidates
+            best = max(
+                pool, key=lambda item: (
+                    item["hold_incumbent_dm_sensitivity_score"]
+                    - 0.01 * item["abstention_rate"],
+                    item["coverage"],
+                ),
+            )
+            chosen_hyper = {name: best[name] for name in (
+                "temperature", "behavior_weight", "behavior_floor", "hold_margin"
+            ) if name in best}
+            behavior_selections.append({
+                "fold": fold, "mode": mode,
+                "validated": bool(feasible), "validation_coverage": best["coverage"],
+                "support_method": winner["method"],
+                "support_alpha": winner["alpha"],
+                "training_prior_rows": behavior_model.policy_rows,
+                "hyperparameters": chosen_hyper,
+                "selection_scope": "seen_validation_only; no final-test tuning",
+            })
+            for split, final_frame in (("seen", seen), ("unseen", unseen)):
+                metrics = _actions_and_metrics(
+                    support, bundle, evaluator, final_frame, config,
+                    winner["method"], winner["alpha"],
+                    sla_residual_margin=margin, collect_clusters=True,
+                    switch_margin=switch_margin,
+                    behavior_mode=mode, behavior_model=behavior_model,
+                    random_seed=seed + 9002, **chosen_hyper,
+                )
+                behavior_cluster_rows.extend([
+                    {"fold": fold, "split": split, "mode": mode, **row}
+                    for row in metrics.pop("cluster_rows")
+                ])
+                behavior_slice_rows.extend([
+                    {"fold": fold, "split": split, "mode": mode, **row}
+                    for row in metrics.pop("slice_scenario")
+                ])
+                behavior_tests.append({
+                    "fold": fold, "split": split, "mode": mode,
+                    "support_method": winner["method"],
+                    "support_alpha": winner["alpha"],
+                    **chosen_hyper, **metrics,
+                })
     for name, frame in (("seen", seen), ("unseen", unseen)):
         metrics = _actions_and_metrics(
             support, bundle, evaluator, frame, config,
@@ -358,4 +475,12 @@ def run_optional_conformal_fold(
         "final_tests": results,
         "cluster_evidence": clusters,
         "slice_scenario": slices,
+        "behavior_variants": {
+            "enabled": behavior_variants_enabled,
+            "validation_grid": behavior_validation,
+            "final_tests": behavior_tests,
+            "cluster_evidence": behavior_cluster_rows,
+            "slice_scenario": behavior_slice_rows,
+            "selections": behavior_selections,
+        },
     }
