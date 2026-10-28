@@ -127,6 +127,49 @@ penalty uses held-out learned-model error rather than leaking the injected
 experimental bias. This remains a deliberately simplified queue/spectrum
 simulator, **not** Colosseum/SCOPE or 3GPP-calibrated control.
 
+## Feasibility and risk calibration correction (October 28, 2026)
+
+The first episode-blocked COMMAG publication rerun produced **zero accepted
+actions** on 1,067,734 held-out decisions. This is a scientific failure, not
+a safety success. Two simultaneous causes were documented: 95%-quantile
+**pointwise episode maxima** in the logged SLA residual (+0.567/+0.613)
+already exceeded the 0.50 eligibility threshold, and `alpha=0.01` required
+99 independent support-calibration episodes per slice/action/role while only
+about 6–16 were present.
+
+The optional research branch now:
+
+1. Calibrates a 95% quantile of **episode-MEAN** logged-action SLA residual
+   bias, keeps worst-step calibration **as a diagnostic**, and explicitly
+   states that mean-risk screening is *not* per-step safety or a bound for
+   alternative interventions.
+2. Searches `alpha={0.10,0.15,0.20,0.25,0.30,0.35}`, retaining the
+   per-action episode-resolution gate, instead of exclusively using
+   scientifically unresolvable thresholds.
+3. Exports four rejection-pipeline coverages (slice/OOD; predicted SLA and
+   uncertainty; conditional support; joint eligible) to reveal where
+   abstention occurs.
+4. Requires at least 5% validation actuation coverage for a candidate to
+   count as *validation-feasible*. When the entire grid is degenerate, the
+   output explicitly records failure. It does not call an all-abstaining
+   candidate a successful selected model.
+5. Preserves the independent OPE role, episode-blocked role separation,
+   fail-closed no-actuation decision, matched baselines, and statistical
+   sensitivity analyses.
+
+These modifications are a **new scientific hypothesis**, not a successful
+COMMAG performance result. Lower observed risk margins arise from targeting
+*episode-average* residuals instead of worst individual steps; they are not
+a relaxation of a certified instantaneous-SLA guarantee (no such guarantee
+was ever demonstrated). If an actual per-step SLA guarantee is required,
+the previous zero-coverage controller is evidence that this dataset and
+model cannot establish one under the old threshold.
+
+Do not claim that conformal support p-values are causal propensity estimates,
+or that action safety is validated by the logged-action residual margin.
+Full-scale tests must establish risk, utility, coverage, latency, cluster CIs
+and deployment applicability before selecting a paper headline.
+
 ## What must still be done for publication
 
 1. Replace random point-wise conformal calibration inside training roles with

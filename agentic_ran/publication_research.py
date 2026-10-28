@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from agentic_ran.offline_policy import StudyConfig, _current_actions, _derive_targets
+from agentic_ran.research_calibration import calibrate_episode_sla
 from agentic_ran.publication_science import _choose_from_precomputed, _policy_precompute
 from agentic_ran.selective_evidence import cluster_accounting, combine_chunks, accounting_summary
 from agentic_ran.publication_support import CONTEXT_COLUMNS
@@ -59,6 +60,12 @@ def _actions_and_metrics(
     sum_utility = sum_sla = sum_energy = sum_eligible = 0.0
     sum_hold_score = 0.0
     hold_available = hold_abstentions = 0
+    gate_totals = {
+        "slice_and_ood_rows": 0,
+        "sla_and_uncertainty_rows": 0,
+        "conditional_support_rows": 0,
+        "joint_eligible_rows": 0,
+    }
     evidence_rows = []
     breakdown = []
     for start in range(0, n, batch_size):
@@ -75,6 +82,18 @@ def _actions_and_metrics(
         incumbent_idx = np.array(
             [action_index.get(str(a), -1) for a in incumbents], dtype=int,
         )
+        # Report *where* rejection occurs. Overlap and predicted risk are
+        # distinct gates: a zero-coverage policy must never pass unnoticed.
+        finite = np.isfinite(scores) & np.isfinite(sla) & np.isfinite(uncertainty)
+        risk_ok = (
+            finite & (sla <= config.sla_threshold)
+            & (uncertainty <= config.uncertainty_threshold)
+        )
+        eligible = allowed & risk_ok & p
+        gate_totals["slice_and_ood_rows"] += int(np.any(allowed, axis=1).sum())
+        gate_totals["sla_and_uncertainty_rows"] += int(np.any(allowed & risk_ok, axis=1).sum())
+        gate_totals["conditional_support_rows"] += int(np.any(allowed & p, axis=1).sum())
+        gate_totals["joint_eligible_rows"] += int(np.any(eligible, axis=1).sum())
         decisions = rerank(
             scores, sla, uncertainty, allowed, p, incumbent_idx,
             method=method, alpha=alpha, max_sla=config.sla_threshold,
@@ -170,6 +189,10 @@ def _actions_and_metrics(
         "abstention_rate": 1 - accepted / max(counted, 1),
         "rerank_rate": reranked / max(counted, 1),
         "mean_eligible_actions": sum_eligible / max(counted, 1),
+        "gate_slice_ood_coverage": gate_totals["slice_and_ood_rows"] / max(counted, 1),
+        "gate_predicted_risk_coverage": gate_totals["sla_and_uncertainty_rows"] / max(counted, 1),
+        "gate_support_coverage": gate_totals["conditional_support_rows"] / max(counted, 1),
+        "gate_joint_coverage": gate_totals["joint_eligible_rows"] / max(counted, 1),
         "conditional_dm_utility": sum_utility / accepted if accepted else None,
         "conditional_dm_sla_violation": sum_sla / accepted if accepted else None,
         "conditional_dm_energy_proxy": sum_energy / accepted if accepted else None,
@@ -239,27 +262,21 @@ def run_optional_conformal_fold(
     finite_residual = np.isfinite(residuals)
     residuals = residuals[finite_residual]
     episode_for_residual = episode_for_residual[finite_residual]
-    # One worst-case residual per independent episode, instead of treating
-    # correlated 250-ms/1-s observations as independent calibration units.
-    blocked_residuals = np.array([
-        np.max(residuals[episode_for_residual == ep])
-        for ep in np.unique(episode_for_residual)
-    ])
-    if len(blocked_residuals) < 19:
-        # 95% one-sided bound needs at least 19 independent calibration units.
-        # The safe response to too few episodes is to disable actuation.
-        margin = float("inf")
-    else:
-        quantile = min(
-            1.0, np.ceil((len(blocked_residuals) + 1) * 0.95)
-            / len(blocked_residuals),
-        )
-        margin = max(0.0, float(
-            np.quantile(blocked_residuals, quantile, method="higher")
-        ))
+    # This is a logged-action episode-MEAN bias diagnostic. The previous
+    # pointwise episode maximum exceeded the SLA cutoff in both COMMAG folds
+    # and rendered every candidate impossible. The worst-step diagnostic
+    # remains reported, never substituted for the mean-risk estimand.
+    risk_calibration = calibrate_episode_sla(
+        residuals, episode_for_residual, confidence=0.95, min_episodes=19,
+    )
+    margin = risk_calibration.mean_loss_bias_margin
+    blocked_residuals = np.unique(episode_for_residual)
     grid = []
     for method in ("knn", "gaussian", "gmm"):
-        for alpha in (0.01, 0.05, 0.10, 0.20):
+        # Action-conditional episode counts are often 6-16 on COMMAG.
+        # At alpha=.01 every group fails resolution by construction.
+        # The method still fails closed where n_cal is too small for alpha.
+        for alpha in (0.10, 0.15, 0.20, 0.25, 0.30, 0.35):
             metrics = _actions_and_metrics(
                 support, bundle, evaluator, selection_frame, config, method, alpha,
                 sla_residual_margin=margin,
@@ -268,10 +285,20 @@ def run_optional_conformal_fold(
                 "fold": fold, "split": "validation",
                 "method": method, "alpha": alpha, **metrics,
             })
+    # Never pronounce an all-abstain validation grid as a successful tune.
+    min_validation_coverage = 0.05
+    feasible_grid = [
+        item for item in grid
+        if item["coverage"] >= min_validation_coverage
+        and np.isfinite(item["hold_incumbent_dm_sensitivity_score"])
+    ]
+    validation_feasible = bool(feasible_grid)
     winner = max(
-        grid, key=lambda item: (
+        feasible_grid if feasible_grid else grid,
+        key=lambda item: (
             item["hold_incumbent_dm_sensitivity_score"]
-            - 0.01 * item["abstention_rate"]
+            - 0.01 * item["abstention_rate"],
+            item["gate_joint_coverage"],
         ),
     )
     results = []
@@ -306,14 +333,26 @@ def run_optional_conformal_fold(
             "logged_action_sla_residual_margin": margin,
             "logged_residual_count": len(residuals),
             "residual_calibration_episode_count": len(blocked_residuals),
-            "residual_calibration_protocol": "episode_maximum_95pct",
+            "residual_calibration_protocol": "episode_mean_quantile_95pct",
+            "residual_worst_step_diagnostic_margin": (
+                risk_calibration.worst_step_residual_margin
+            ),
+            "sla_calibration": risk_calibration.as_dict(),
+            "validation_feasible": validation_feasible,
+            "minimum_validation_coverage": min_validation_coverage,
+            "feasibility_warning": (
+                None if validation_feasible
+                else "NO_FEASIBLE_VALIDATION_CANDIDATE; method is diagnostic only"
+            ),
             "support_fit_on": "training_experiment_roles_only",
             "support_calibration_protocol": support.calibration_protocol,
             "support_calibration_units": {
                 "|".join(key): int(count)
                 for key, count in support.calibration_units.items()
             },
-            "score_selected_on": "validation_hold_incumbent_dm_with_unresolved_penalty",
+            "score_selected_on": (
+                "validation_feasible_hold_incumbent_dm_with_unresolved_penalty"
+            ),
         },
         "validation_grid": grid,
         "final_tests": results,
