@@ -51,7 +51,7 @@ def test_relative_advantage_does_not_switch_when_not_better():
         max_sla=0.5, max_uncertainty=0.5,
     )
     assert (selected.actions == incumbent).all()
-    assert selected.verified_incumbent.all()
+    assert selected.incumbent_eligible.all()
     assert not selected.switched.any()
 
 
