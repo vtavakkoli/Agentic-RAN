@@ -239,7 +239,7 @@ Literature inspirations:
 
 ## November 4: incumbent-relative control, constrained selection and Jev interface
 
-The experimental research switch \`AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT=1\`
+The experimental research switch `AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT=1`
 adds **four optional offline policies** while retaining the original benchmark
 unchanged when the flag is unset. Each uses the same policy-side candidate
 scores and strict conformal/slice/OOD/predicted-SLA/uncertainty eligibility
@@ -247,10 +247,10 @@ gates. Independent OPE predictions are used *after* actions are chosen.
 
 | Research mode | Proposal |
 | --- | --- |
-| \`advantage_lcb\` | Select switch only if predicted advantage over a *jointly eligible incumbent* exceeds an uncertainty-proxy penalty and switching cost |
-| \`constraint_conditioned\` | Rank eligible actions by utility minus configurable normalized SLA and uncertainty burdens |
-| \`behavior_anchored_lcb\` | Relative advantage with a policy-role behavior-cloning log-likelihood anchor |
-| \`verified_hold\` | Hold a *jointly eligible* incumbent unless a high-gain switch passes a stronger advantage threshold |
+| `advantage_lcb` | Select switch only if predicted advantage over a *jointly eligible incumbent* exceeds an uncertainty-proxy penalty and switching cost |
+| `constraint_conditioned` | Rank eligible actions by utility minus configurable normalized SLA and uncertainty burdens |
+| `behavior_anchored_lcb` | Relative advantage with a policy-role behavior-cloning log-likelihood anchor |
+| `verified_hold` | Hold a *jointly eligible* incumbent unless a high-gain switch passes a stronger advantage threshold |
 
 These are **DPRL/C2IQL-inspired experimental baselines, not faithful
 reproductions of DPRL, C2IQL or OCPO-SA**. The per-action critic uncertainty
@@ -260,7 +260,7 @@ formal safe-improvement guarantee**. Safety, OOD and common action masks
 may still reject many eMBB decisions. Never relax them silently to produce a
 superior score.
 
-A \`jev_guided\` selector and \`validated_jev_hints\` interface also exist.
+A `jev_guided` selector and `validated_jev_hints` interface also exist.
 They permit externally recorded, allow-listed numeric Jev recommendations
 within [-0.25, 0.25]. **No Jev model or API is invoked**; Jev is
 *intentionally excluded* from actual model comparisons until inference
@@ -276,7 +276,7 @@ within-cluster paired tests, and actual selected incumbent-hold frequency.
 Run the full dataset evaluation (expect more model predictions/time than the
 original four-variant sweep):
 
-\`\`\`powershell
+```powershell
 cd Agentic-RAN
 git pull --ff-only
 $env:AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT = "1"
@@ -286,19 +286,19 @@ $env:AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD = "1"
 $env:LOCAL_UID = "1000"
 $env:LOCAL_GID = "1000"
 docker compose -f docker-compose.publication.yml up --build --force-recreate --exit-code-from publication-test publication-test
-\`\`\`
+```
 
 The Compose file forwards this flag into the container. Behavior variants can
-also be enabled with \`AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS=1\` if desired; the
+also be enabled with `AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS=1` if desired; the
 new switch enables conformal shared gating independently of that choice.
 
 Additional output files:
-- \`research_safe_improvement_validation.csv\`
-- \`research_safe_improvement_final_tests.csv\`
-- \`research_safe_improvement_cluster_evidence.csv\`
-- \`research_safe_improvement_slice_scenario.csv\`
-- \`research_safe_improvement_paired_statistics.json\`
-- \`research_action_transition_audit.csv\`
+- `research_safe_improvement_validation.csv`
+- `research_safe_improvement_final_tests.csv`
+- `research_safe_improvement_cluster_evidence.csv`
+- `research_safe_improvement_slice_scenario.csv`
+- `research_safe_improvement_paired_statistics.json`
+- `research_action_transition_audit.csv`
 
 The action-transition audit compares action labels on adjacent timestamps
 within the same episode and slice, records timestamp ties, and reports
@@ -309,9 +309,9 @@ An independent sanity check uses a **synthetic generative action-response
 world**, not COMMAG. It exposes both an assumed −0.12 abstention cost and a
 known-incumbent potential outcome. Run:
 
-\`\`\`bash
+```bash
 python -m agentic_ran.research_safe_benchmark --seed 2026 --episodes 60 --output results/research_safe_synthetic.json
-\`\`\`
+```
 
 The CI archive contains this JSON, explicitly labeled synthetic. It cannot
 establish real RAN policy superiority. Publication still requires actual
