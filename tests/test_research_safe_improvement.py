@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from agentic_ran.research_safe_benchmark import run_synthetic_comparison
 from agentic_ran.research_action_audit import audit_recorded_actions
 from agentic_ran.research_safe_improvement import (
     MODES, select_safe_improvement, validated_jev_hints,
@@ -143,3 +144,17 @@ def test_audit_ties_never_count_as_sequential_changes():
     _, summary = audit_recorded_actions(frame)
     assert summary["timestamp_tie_rows"] == 1
     assert summary["adjacent_observed_action_changes"] == 0
+
+
+def test_synthetic_comparison_is_reproducible_and_labels_toy_estimands():
+    first = run_synthetic_comparison(seed=23, episodes=8, steps=5)
+    second = run_synthetic_comparison(seed=23, episodes=8, steps=5)
+    assert first == second
+    assert first["experiment"] == "synthetic_potential_outcomes_only_not_COMMAG"
+    assert len(first["ranking_by_toy_known_hold"]) == 5
+    for mode, stats in first["results"].items():
+        assert 0 <= stats["coverage"] <= 1
+        assert 0 <= stats["toy_sla_violation_rate"] <= 1
+        assert np.isfinite(stats["toy_known_hold_score"])
+        if mode != "conformal_rerank":
+            assert len(stats["paired_known_hold_ci95"]) == 2
