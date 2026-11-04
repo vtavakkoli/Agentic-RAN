@@ -35,6 +35,15 @@ jobs:
           ruff check --select E9,F63,F7,F82 .
       - name: Tests and coverage
         run: pytest --cov=agentic_ran --cov-report=term-missing --cov-report=xml
+      - name: Synthetic safe-policy comparison (not COMMAG)
+        if: matrix.python-version == '3.13'
+        run: python -m agentic_ran.research_safe_benchmark --episodes 60 --output results/research_safe_synthetic.json
+      - name: Upload synthetic comparison
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: safe-improvement-synthetic-only
+          path: results/research_safe_synthetic.json
       - name: Upload coverage
         if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4

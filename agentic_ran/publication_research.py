@@ -19,6 +19,7 @@ from agentic_ran.publication_science import _choose_from_precomputed, _policy_pr
 from agentic_ran.selective_evidence import cluster_accounting, combine_chunks, accounting_summary
 from agentic_ran.publication_support import CONTEXT_COLUMNS
 from agentic_ran.research_support import ConformalActionSupport, rerank
+from agentic_ran.research_safe_improvement import select_safe_improvement
 from agentic_ran.research_behavior import (
     MODES, BehaviorPrior, select_behavior, stable_uniforms,
 )
@@ -54,6 +55,8 @@ def _actions_and_metrics(
     temperature: float = 0.06, behavior_weight: float = 0.5,
     behavior_floor: float = 0.02, hold_margin: float = 0.02,
     random_seed: int = 2026,
+    safe_mode: str | None = None, advantage_penalty: float = 0.25,
+    risk_weight: float = 0.2, behavior_anchor_weight: float = 0.05,
 ):
     """Paired evaluation with three explicitly distinct abstention estimands.
 
@@ -76,6 +79,8 @@ def _actions_and_metrics(
     evidence_rows = []
     breakdown = []
     total_entropy = 0.0
+    selected_hold = 0
+    verified_incumbent = 0
     for start in range(0, n, batch_size):
         chunk = frame.iloc[start:start + batch_size]
         scores, sla, uncertainty, allowed, pre = _eligible_inputs(bundle, chunk, config)
@@ -102,7 +107,25 @@ def _actions_and_metrics(
         gate_totals["sla_and_uncertainty_rows"] += int(np.any(allowed & risk_ok, axis=1).sum())
         gate_totals["conditional_support_rows"] += int(np.any(allowed & p, axis=1).sum())
         gate_totals["joint_eligible_rows"] += int(np.any(eligible, axis=1).sum())
-        if behavior_mode is None:
+        if safe_mode is not None:
+            prior = (
+                behavior_model.probabilities(chunk)
+                if safe_mode == "behavior_anchored_lcb" and behavior_model is not None
+                else None
+            )
+            decisions = select_safe_improvement(
+                scores, sla, uncertainty, allowed, p, incumbent_idx,
+                mode=safe_mode, max_sla=config.sla_threshold,
+                max_uncertainty=config.uncertainty_threshold,
+                advantage_penalty=advantage_penalty,
+                risk_weight=risk_weight,
+                behavior_prior=prior,
+                behavior_weight=behavior_anchor_weight,
+            )
+            changed = decisions.switched
+            selected_hold += int((~decisions.abstain & ~decisions.switched).sum())
+            verified_incumbent += int(decisions.incumbent_eligible.sum())
+        elif behavior_mode is None:
             decisions = rerank(
                 scores, sla, uncertainty, allowed, p, incumbent_idx,
                 method=method, alpha=alpha, max_sla=config.sla_threshold,
@@ -218,8 +241,10 @@ def _actions_and_metrics(
         "abstention_rate": 1 - accepted / max(counted, 1),
         "rerank_rate": reranked / max(counted, 1),
         "mean_eligible_actions": sum_eligible / max(counted, 1),
-        "policy_variant": behavior_mode or "conformal_rerank",
+        "policy_variant": safe_mode or behavior_mode or "conformal_rerank",
         "mean_action_entropy": total_entropy / max(counted, 1),
+        "verified_incumbent_rate": verified_incumbent / max(counted, 1),
+        "selected_hold_rate": selected_hold / max(counted, 1),
         "gate_slice_ood_coverage": gate_totals["slice_and_ood_rows"] / max(counted, 1),
         "gate_predicted_risk_coverage": gate_totals["sla_and_uncertainty_rows"] / max(counted, 1),
         "gate_support_coverage": gate_totals["conditional_support_rows"] / max(counted, 1),
@@ -253,6 +278,7 @@ def run_optional_conformal_fold(
     config: StudyConfig, *, seed: int, fold: str,
     switch_margin: float = 0.0,
     behavior_variants_enabled: bool = False,
+    safe_improvement_enabled: bool = False,
 ):
     roles = {
         role: (
@@ -341,11 +367,17 @@ def run_optional_conformal_fold(
     behavior_cluster_rows = []
     behavior_slice_rows = []
     behavior_selections = []
+    safe_validation = []
+    safe_tests = []
+    safe_cluster_rows = []
+    safe_slice_rows = []
+    safe_selections = []
     behavior_model = None
-    if behavior_variants_enabled:
+    if behavior_variants_enabled or safe_improvement_enabled:
         behavior_model = BehaviorPrior.fit(
             policy_fit, bundle.actions, seed=seed + 9001,
         )
+    if behavior_variants_enabled:
         variants = {
             "boltzmann": [
                 {"temperature": t} for t in (0.025, 0.06, 0.12)
@@ -425,6 +457,89 @@ def run_optional_conformal_fold(
                     "support_alpha": winner["alpha"],
                     **chosen_hyper, **metrics,
                 })
+    if safe_improvement_enabled:
+        safe_variants = {
+            "advantage_lcb": [
+                {"advantage_penalty": z} for z in (0.0, 0.2, 0.6)
+            ],
+            "constraint_conditioned": [
+                {"risk_weight": z} for z in (0.05, 0.2, 0.5)
+            ],
+            "behavior_anchored_lcb": [
+                {"advantage_penalty": z, "behavior_anchor_weight": b}
+                for z in (0.0, 0.25) for b in (0.01, 0.05)
+            ],
+            "verified_hold": [
+                {"advantage_penalty": z} for z in (0.0, 0.2, 0.5)
+            ],
+        }
+        for mode, hyper_grid in safe_variants.items():
+            candidates = []
+            for hyper in hyper_grid:
+                metrics = _actions_and_metrics(
+                    support, bundle, evaluator, selection_frame, config,
+                    winner["method"], winner["alpha"],
+                    sla_residual_margin=margin, safe_mode=mode,
+                    behavior_model=behavior_model, **hyper,
+                )
+                item = {
+                    "fold": fold, "split": "validation", "mode": mode,
+                    "support_method": winner["method"],
+                    "support_alpha": winner["alpha"],
+                    **hyper, **metrics,
+                }
+                candidates.append(item)
+                safe_validation.append(item)
+            feasible = [row for row in candidates if row["coverage"] >= 0.05]
+            best = max(
+                feasible if feasible else candidates,
+                key=lambda item: (
+                    item["hold_incumbent_dm_sensitivity_score"]
+                    - 0.01 * item["abstention_rate"], item["coverage"],
+                ),
+            )
+            chosen_hyper = {
+                k: best[k] for k in (
+                    "advantage_penalty", "risk_weight", "behavior_anchor_weight",
+                ) if k in best
+            }
+            safe_selections.append({
+                "fold": fold, "mode": mode,
+                "validation_feasible": bool(feasible),
+                "validation_coverage": best["coverage"],
+                "validation_objective": (
+                    best["hold_incumbent_dm_sensitivity_score"]
+                    - 0.01 * best["abstention_rate"]
+                ),
+                "hyperparameters": chosen_hyper,
+                "selection_scope": "seen_validation_only_before_final_test",
+            })
+            for split, final_frame in (("seen", seen), ("unseen", unseen)):
+                metrics = _actions_and_metrics(
+                    support, bundle, evaluator, final_frame, config,
+                    winner["method"], winner["alpha"],
+                    sla_residual_margin=margin, safe_mode=mode,
+                    behavior_model=behavior_model, collect_clusters=True,
+                    switch_margin=switch_margin, **chosen_hyper,
+                )
+                safe_cluster_rows.extend([
+                    {"fold": fold, "split": split, "mode": mode, **row}
+                    for row in metrics.pop("cluster_rows")
+                ])
+                safe_slice_rows.extend([
+                    {"fold": fold, "split": split, "mode": mode, **row}
+                    for row in metrics.pop("slice_scenario")
+                ])
+                safe_tests.append({
+                    "fold": fold, "split": split, "mode": mode,
+                    "support_method": winner["method"],
+                    "support_alpha": winner["alpha"], **chosen_hyper, **metrics,
+                })
+    safe_eligible = [s for s in safe_selections if s["validation_feasible"]]
+    safe_meta = (
+        max(safe_eligible, key=lambda x: x["validation_objective"])["mode"]
+        if safe_eligible else None
+    )
     # A separate, predeclared meta-selector chooses the best among the
     # *validation-feasible* controller families. This choice is frozen before
     # any held-out result is used; do not declare a winner from final tests.
@@ -487,6 +602,18 @@ def run_optional_conformal_fold(
         "final_tests": results,
         "cluster_evidence": clusters,
         "slice_scenario": slices,
+        "safe_improvement": {
+            "enabled": safe_improvement_enabled,
+            "validation_grid": safe_validation,
+            "final_tests": safe_tests,
+            "cluster_evidence": safe_cluster_rows,
+            "slice_scenario": safe_slice_rows,
+            "selections": safe_selections,
+            "meta_selected_mode": safe_meta,
+            "meta_selection_scope": "seen_validation_only_before_final_test",
+            "jev_evaluated": False,
+            "jev_reason": "no independently recorded Jev inferences available",
+        },
         "behavior_variants": {
             "enabled": behavior_variants_enabled,
             "validation_grid": behavior_validation,
