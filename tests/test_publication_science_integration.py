@@ -142,6 +142,7 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     monkeypatch.setenv("AGENTIC_RAN_EVAL_MATCHED_WRAPPERS", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_CONFORMAL_RERANK", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS", "1")
+    monkeypatch.setenv("AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT", "1")
     data = tmp_path / "synthetic.csv.gz"
     output = tmp_path / "publication"
     _synthetic_publication_frame().to_csv(data, index=False, compression="gzip")
@@ -228,6 +229,29 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     assert (output / "research_conformal_slice_scenario.csv").is_file()
     assert (output / "research_conformal_validation.csv").is_file()
     assert (output / "research_conformal_final_tests.csv").is_file()
+    safe = summary["research_safe_improvement"]
+    assert safe["enabled"]
+    assert not safe["jev_inference_available"]
+    assert len(safe["modes"]) == 4
+    assert len(safe["meta_selection"]) == 2
+    for mode in safe["modes"]:
+        for split in ("seen", "unseen"):
+            assert safe["paired_evidence"][mode][split]["accounting"]["rows"] > 0
+    for name in (
+        "research_safe_improvement_validation.csv",
+        "research_safe_improvement_final_tests.csv",
+        "research_safe_improvement_cluster_evidence.csv",
+        "research_safe_improvement_slice_scenario.csv",
+        "research_safe_improvement_paired_statistics.json",
+        "research_action_transition_audit.csv",
+    ):
+        assert (output / name).is_file()
+    safe_tests = pd.read_csv(output / "research_safe_improvement_final_tests.csv")
+    assert set(safe_tests["mode"]) == set(safe["modes"])
+    assert len(safe_tests) == 2 * 2 * len(safe["modes"])
+    assert all("adjacent_observed_action_changes" in x
+               for x in safe["action_transition_audit"].values())
+
     behavior = summary["research_behavior_variants"]
     assert behavior["enabled"]
     assert set(behavior["modes"]) == {
