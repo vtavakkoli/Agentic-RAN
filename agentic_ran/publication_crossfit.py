@@ -346,9 +346,12 @@ def run_crossfit_benchmark(
     behavior_variants_enabled = (
         os.environ.get("AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS", "0") == "1"
     )
+    safe_improvement_enabled = (
+        os.environ.get("AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT", "0") == "1"
+    )
     conformal_rerank_enabled = (
         os.environ.get("AGENTIC_RAN_EVAL_CONFORMAL_RERANK", "0") == "1"
-        or behavior_variants_enabled
+        or behavior_variants_enabled or safe_improvement_enabled
     )
     conformal_selection = []
     conformal_validation = []
@@ -361,6 +364,12 @@ def run_crossfit_benchmark(
     behavior_slice_rows = []
     behavior_selection_rows = []
     behavior_meta_selection = []
+    safe_validation_rows = []
+    safe_test_rows = []
+    safe_cluster_rows = []
+    safe_slice_rows = []
+    safe_selection_rows = []
+    safe_meta_selection = []
     fold_baselines: list[pd.DataFrame] = []
     decision_tables: list[pd.DataFrame] = []
     comparison_models = ["proposed", "fqi", "cql_linear", "behavior_hgb"]
@@ -463,6 +472,7 @@ def run_crossfit_benchmark(
                 seed=seed + 12000 + fold_index, fold=fold_name,
                 switch_margin=switch_margin,
                 behavior_variants_enabled=behavior_variants_enabled,
+                safe_improvement_enabled=safe_improvement_enabled,
             )
             conformal_selection.append(trial["selection"])
             conformal_validation.extend(trial["validation_grid"])
@@ -479,6 +489,18 @@ def run_crossfit_benchmark(
                 behavior_meta_selection.append({
                     "fold": fold_name, "selected_mode": extra["meta_selected_mode"],
                     "selection_scope": extra["meta_selection_scope"],
+                })
+            if safe_improvement_enabled:
+                extra_safe = trial["safe_improvement"]
+                safe_validation_rows.extend(extra_safe["validation_grid"])
+                safe_test_rows.extend(extra_safe["final_tests"])
+                safe_cluster_rows.extend(extra_safe["cluster_evidence"])
+                safe_slice_rows.extend(extra_safe["slice_scenario"])
+                safe_selection_rows.extend(extra_safe["selections"])
+                safe_meta_selection.append({
+                    "fold": fold_name,
+                    "selected_mode": extra_safe["meta_selected_mode"],
+                    "selection_scope": extra_safe["meta_selection_scope"],
                 })
 
         for split_name, test in (("seen", seen_fold), ("unseen", unseen_fold)):
@@ -596,6 +618,39 @@ def run_crossfit_benchmark(
                         estimand: paired_cluster_inference(
                             grouped, estimand,
                             seed=seed + 25000 + i * 100 + MODES.index(mode) * 10 + j,
+                            bootstrap_samples=science.bootstrap_samples,
+                            permutation_samples=science.permutation_samples,
+                        )
+                        for j, estimand in enumerate((
+                            "fixed_penalty", "hold_incumbent_dm",
+                            "observed_logged_hold_proxy",
+                        ))
+                    },
+                }
+    safe_comparisons = {}
+    if safe_improvement_enabled:
+        from agentic_ran.research_safe_improvement import MODES as SAFE_MODES
+        for mode in SAFE_MODES:
+            if mode == "jev_guided":
+                continue  # not an empirical result without Jev inference data
+            safe_comparisons[mode] = {}
+            for i, (split, source) in enumerate((("seen", seen), ("unseen", unseen))):
+                cells = [
+                    row for row in safe_cluster_rows
+                    if row["split"] == split and row["mode"] == mode
+                ]
+                grouped = combine_chunks(cells)
+                if grouped.empty or int(grouped["rows"].sum()) != len(source):
+                    raise RuntimeError(
+                        f"safe-improvement {mode}/{split} missing or duplicated test rows"
+                    )
+                safe_comparisons[mode][split] = {
+                    "accounting": accounting_summary(grouped),
+                    "paired": {
+                        estimand: paired_cluster_inference(
+                            grouped, estimand,
+                            seed=seed + 28000 + i * 100
+                            + SAFE_MODES.index(mode) * 10 + j,
                             bootstrap_samples=science.bootstrap_samples,
                             permutation_samples=science.permutation_samples,
                         )
@@ -877,6 +932,26 @@ def run_crossfit_benchmark(
         "claim_scope": claim_scope,
         "tradeoff_summary": tradeoffs,
         "state_conditional_overlap": overlap_summary,
+        "research_safe_improvement": {
+            "enabled": safe_improvement_enabled,
+            "modes": (
+                ["advantage_lcb", "constraint_conditioned",
+                 "behavior_anchored_lcb", "verified_hold"]
+                if safe_improvement_enabled else []
+            ),
+            "jev_inference_available": False,
+            "jev_guidance": "schema-checked adapter only; no actual Jev outputs",
+            "train_only_prior": True,
+            "matched_support_sla_uncertainty_ood_gates": True,
+            "validation_selections": safe_selection_rows,
+            "meta_selection": safe_meta_selection,
+            "paired_evidence": safe_comparisons,
+            "statistical_caveat": (
+                "critic uncertainty is not calibrated advantage LCB; "
+                "logged RAN actions do not identify intervention effects"
+            ),
+            "publication_ready": False,
+        },
         "research_behavior_variants": {
             "enabled": behavior_variants_enabled,
             "modes": (
@@ -967,6 +1042,22 @@ def run_crossfit_benchmark(
 
     calibration = pd.concat(calibration_tables, ignore_index=True)
     cql_validation = pd.concat(cql_tables, ignore_index=True)
+    if safe_improvement_enabled:
+        pd.DataFrame(safe_validation_rows).to_csv(
+            destination / "research_safe_improvement_validation.csv", index=False,
+        )
+        pd.DataFrame(safe_test_rows).to_csv(
+            destination / "research_safe_improvement_final_tests.csv", index=False,
+        )
+        pd.DataFrame(safe_cluster_rows).to_csv(
+            destination / "research_safe_improvement_cluster_evidence.csv", index=False,
+        )
+        pd.DataFrame(safe_slice_rows).to_csv(
+            destination / "research_safe_improvement_slice_scenario.csv", index=False,
+        )
+        (destination / "research_safe_improvement_paired_statistics.json").write_text(
+            json.dumps(safe_comparisons, indent=2), encoding="utf-8",
+        )
     if behavior_variants_enabled:
         pd.DataFrame(behavior_validation_rows).to_csv(
             destination / "research_behavior_validation.csv", index=False,
