@@ -628,7 +628,15 @@ def run_crossfit_benchmark(
                     },
                 }
     safe_comparisons = {}
+    safe_action_audit_rows = []
+    safe_action_audit_summaries = {}
     if safe_improvement_enabled:
+        from agentic_ran.research_action_audit import audit_recorded_actions
+        for split, frame in (("seen", seen), ("unseen", unseen)):
+            detail, diagnosis = audit_recorded_actions(frame)
+            detail.insert(0, "split", split)
+            safe_action_audit_rows.extend(detail.to_dict(orient="records"))
+            safe_action_audit_summaries[split] = diagnosis
         from agentic_ran.research_safe_improvement import MODES as SAFE_MODES
         for mode in SAFE_MODES:
             if mode == "jev_guided":
@@ -946,6 +954,7 @@ def run_crossfit_benchmark(
             "validation_selections": safe_selection_rows,
             "meta_selection": safe_meta_selection,
             "paired_evidence": safe_comparisons,
+            "action_transition_audit": safe_action_audit_summaries,
             "statistical_caveat": (
                 "critic uncertainty is not calibrated advantage LCB; "
                 "logged RAN actions do not identify intervention effects"
@@ -1043,6 +1052,9 @@ def run_crossfit_benchmark(
     calibration = pd.concat(calibration_tables, ignore_index=True)
     cql_validation = pd.concat(cql_tables, ignore_index=True)
     if safe_improvement_enabled:
+        pd.DataFrame(safe_action_audit_rows).to_csv(
+            destination / "research_action_transition_audit.csv", index=False,
+        )
         pd.DataFrame(safe_validation_rows).to_csv(
             destination / "research_safe_improvement_validation.csv", index=False,
         )
