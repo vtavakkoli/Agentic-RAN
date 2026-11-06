@@ -349,9 +349,12 @@ def run_crossfit_benchmark(
     safe_improvement_enabled = (
         os.environ.get("AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT", "0") == "1"
     )
+    hybrid_enabled = (
+        os.environ.get("AGENTIC_RAN_EVAL_ADAPTIVE_HYBRID", "0") == "1"
+    )
     conformal_rerank_enabled = (
         os.environ.get("AGENTIC_RAN_EVAL_CONFORMAL_RERANK", "0") == "1"
-        or behavior_variants_enabled or safe_improvement_enabled
+        or behavior_variants_enabled or safe_improvement_enabled or hybrid_enabled
     )
     conformal_selection = []
     conformal_validation = []
@@ -370,6 +373,11 @@ def run_crossfit_benchmark(
     safe_slice_rows = []
     safe_selection_rows = []
     safe_meta_selection = []
+    hybrid_validation_rows = []
+    hybrid_test_rows = []
+    hybrid_cluster_rows = []
+    hybrid_slice_rows = []
+    hybrid_selection_rows = []
     fold_baselines: list[pd.DataFrame] = []
     decision_tables: list[pd.DataFrame] = []
     comparison_models = ["proposed", "fqi", "cql_linear", "behavior_hgb"]
@@ -473,6 +481,7 @@ def run_crossfit_benchmark(
                 switch_margin=switch_margin,
                 behavior_variants_enabled=behavior_variants_enabled,
                 safe_improvement_enabled=safe_improvement_enabled,
+                hybrid_enabled=hybrid_enabled,
             )
             conformal_selection.append(trial["selection"])
             conformal_validation.extend(trial["validation_grid"])
@@ -490,6 +499,13 @@ def run_crossfit_benchmark(
                     "fold": fold_name, "selected_mode": extra["meta_selected_mode"],
                     "selection_scope": extra["meta_selection_scope"],
                 })
+            if hybrid_enabled:
+                hybrid = trial["adaptive_hybrid"]
+                hybrid_validation_rows.extend(hybrid["validation_grid"])
+                hybrid_test_rows.extend(hybrid["final_tests"])
+                hybrid_cluster_rows.extend(hybrid["cluster_evidence"])
+                hybrid_slice_rows.extend(hybrid["slice_scenario"])
+                hybrid_selection_rows.extend(hybrid["selections"])
             if safe_improvement_enabled:
                 extra_safe = trial["safe_improvement"]
                 safe_validation_rows.extend(extra_safe["validation_grid"])
@@ -668,6 +684,42 @@ def run_crossfit_benchmark(
                         ))
                     },
                 }
+    hybrid_comparisons = {}
+    if hybrid_enabled:
+        from agentic_ran.research_hybrid_evidence import compare_cluster_policies
+        for split_index, (split, source) in enumerate((("seen", seen), ("unseen", unseen))):
+            selected = [x for x in hybrid_cluster_rows if x["split"] == split]
+            if int(combine_chunks(selected)["rows"].sum()) != len(source):
+                raise RuntimeError(f"hybrid {split} rows not evaluated exactly once")
+            references = {
+                "conformal": [
+                    x for x in conformal_cluster_rows if x["split"] == split
+                ],
+            }
+            if behavior_variants_enabled:
+                for name in ("behavior_kl", "behavior_tree"):
+                    references[name] = [
+                        x for x in behavior_cluster_rows
+                        if x["split"] == split and x["mode"] == name
+                    ]
+            if safe_improvement_enabled:
+                references["constraint_conditioned"] = [
+                    x for x in safe_cluster_rows
+                    if x["split"] == split and x["mode"] == "constraint_conditioned"
+                ]
+            hybrid_comparisons[split] = {
+                reference_name: compare_cluster_policies(
+                    selected, reference_cells,
+                    seed=seed + 30000 + 100 * split_index + j,
+                    bootstrap_samples=science.bootstrap_samples,
+                    permutation_samples=science.permutation_samples,
+                )
+                for j, (reference_name, reference_cells) in enumerate(references.items())
+            }
+            if not hybrid_comparisons[split]["conformal"]["abstention_penalty_cancels"]:
+                raise RuntimeError(
+                    "Hybrid versus conformal did not share the same abstention mask"
+                )
     ablations = pd.DataFrame(ablation_rows)
     state_overlap = pd.DataFrame(state_overlap_rows)
     overlap_summary = {}
@@ -940,6 +992,27 @@ def run_crossfit_benchmark(
         "claim_scope": claim_scope,
         "tradeoff_summary": tradeoffs,
         "state_conditional_overlap": overlap_summary,
+        "research_adaptive_hybrid": {
+            "enabled": hybrid_enabled,
+            "validation_grid_profiles": (
+                ["conformal_anchor", "slice_risk_light", "slice_risk",
+                 "slice_risk_strong", "behavior_anchor", "behavior_risk",
+                 "incumbent_hysteresis", "adaptive_balanced",
+                 "adaptive_conservative"] if hybrid_enabled else []
+            ),
+            "selection_protocol": (
+                "predeclared nine-profile grid, baseline-anchored validation-only "
+                "minimum full-row score gain 0.00025, coverage >=99.5% of "
+                "conformal reference and SLA regression <=0.0025"
+            ),
+            "held_out_selections": hybrid_selection_rows,
+            "paired_evidence": hybrid_comparisons,
+            "training_only_behavior_prior": True,
+            "shared_mask_with_conformal": True,
+            "unseen_test_used_for_selection": False,
+            "no_closed_loop_safety_certificate": True,
+            "publication_ready": False,
+        },
         "research_safe_improvement": {
             "enabled": safe_improvement_enabled,
             "modes": (
@@ -1051,6 +1124,22 @@ def run_crossfit_benchmark(
 
     calibration = pd.concat(calibration_tables, ignore_index=True)
     cql_validation = pd.concat(cql_tables, ignore_index=True)
+    if hybrid_enabled:
+        pd.DataFrame(hybrid_validation_rows).to_csv(
+            destination / "research_hybrid_validation.csv", index=False,
+        )
+        pd.DataFrame(hybrid_test_rows).to_csv(
+            destination / "research_hybrid_final_tests.csv", index=False,
+        )
+        pd.DataFrame(hybrid_cluster_rows).to_csv(
+            destination / "research_hybrid_cluster_evidence.csv", index=False,
+        )
+        pd.DataFrame(hybrid_slice_rows).to_csv(
+            destination / "research_hybrid_slice_scenario.csv", index=False,
+        )
+        (destination / "research_hybrid_paired_statistics.json").write_text(
+            json.dumps(hybrid_comparisons, indent=2), encoding="utf-8",
+        )
     if safe_improvement_enabled:
         pd.DataFrame(safe_action_audit_rows).to_csv(
             destination / "research_action_transition_audit.csv", index=False,

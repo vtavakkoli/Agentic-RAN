@@ -143,6 +143,7 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     monkeypatch.setenv("AGENTIC_RAN_EVAL_CONFORMAL_RERANK", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT", "1")
+    monkeypatch.setenv("AGENTIC_RAN_EVAL_ADAPTIVE_HYBRID", "1")
     data = tmp_path / "synthetic.csv.gz"
     output = tmp_path / "publication"
     _synthetic_publication_frame().to_csv(data, index=False, compression="gzip")
@@ -229,6 +230,28 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     assert (output / "research_conformal_slice_scenario.csv").is_file()
     assert (output / "research_conformal_validation.csv").is_file()
     assert (output / "research_conformal_final_tests.csv").is_file()
+    hybrid = summary["research_adaptive_hybrid"]
+    assert hybrid["enabled"]
+    assert len(hybrid["held_out_selections"]) == 2
+    for split in ("seen", "unseen"):
+        comparison = hybrid["paired_evidence"][split]["conformal"]
+        assert comparison["abstention_penalty_cancels"]
+        assert comparison["same_cluster_coverage"]
+        assert comparison["candidate"]["rows"] > 0
+        assert comparison["paired_cluster_inference"]["cluster_count"] >= 2
+    for filename in (
+        "research_hybrid_validation.csv",
+        "research_hybrid_final_tests.csv",
+        "research_hybrid_cluster_evidence.csv",
+        "research_hybrid_slice_scenario.csv",
+        "research_hybrid_paired_statistics.json",
+    ):
+        assert (output / filename).is_file()
+    hybrid_final = pd.read_csv(output / "research_hybrid_final_tests.csv")
+    assert len(hybrid_final) == 4
+    assert set(hybrid_final["split"]) == {"seen", "unseen"}
+    assert set(hybrid_final["profile"]).issubset(set(hybrid["validation_grid_profiles"]))
+    assert len(pd.read_csv(output / "research_hybrid_validation.csv")) == 18
     safe = summary["research_safe_improvement"]
     assert safe["enabled"]
     assert not safe["jev_inference_available"]
