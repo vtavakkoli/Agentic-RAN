@@ -173,3 +173,59 @@ def select_hybrid(
         chosen.astype(int), abstain, counts.astype(int), switched,
         verified_hold, eligible_incumbent,
     )
+
+
+def select_validation_profile(
+    candidates: list[dict],
+    conformal_reference: dict,
+    *,
+    minimum_coverage_fraction: float = 0.995,
+    max_sla_regression: float = 0.0025,
+    minimum_gain: float = 0.00025,
+) -> tuple[dict, str]:
+    """Preregistered validation-only policy selection with baseline escape.
+
+    All scores are independent model-based estimates with an *assumed*
+    abstention utility; this is not a causal superiority certificate.
+    Require a small positive validation gain over the exact baseline (or
+    choose baseline) while constraining estimated risk and coverage.
+    """
+    if not candidates:
+        raise ValueError("hybrid validation grid is empty")
+    names = [entry["profile"] for entry in candidates]
+    if len(set(names)) != len(names) or "conformal_anchor" not in names:
+        raise ValueError("hybrid candidates must include exactly one anchor")
+    baseline = next(x for x in candidates if x["profile"] == "conformal_anchor")
+    reference_coverage = float(conformal_reference["coverage"])
+    reference_score = float(conformal_reference["unconditional_decision_score"])
+    reference_risk = conformal_reference.get("conditional_dm_sla_violation")
+    # The same evaluator/validation rows must reproduce the legacy baseline.
+    if abs(baseline["coverage"] - reference_coverage) > 1e-9:
+        raise ValueError("hybrid anchor does not match conformal coverage")
+    if abs(baseline["unconditional_decision_score"] - reference_score) > 1e-8:
+        raise ValueError("hybrid anchor does not match conformal utility")
+    qualifying = []
+    for entry in candidates:
+        coverage = float(entry["coverage"])
+        score = float(entry["unconditional_decision_score"])
+        risk = entry.get("conditional_dm_sla_violation")
+        if not np.isfinite(score):
+            continue
+        if coverage < max(0.05, reference_coverage * minimum_coverage_fraction):
+            continue
+        if reference_risk is not None:
+            if risk is None or float(risk) > float(reference_risk) + max_sla_regression:
+                continue
+        if score < reference_score + minimum_gain:
+            continue
+        qualifying.append(entry)
+    if not qualifying:
+        return baseline, "no_validation_candidate_beat_anchor_at_prespecified_margin"
+    best = max(
+        qualifying, key=lambda row: (
+            row["unconditional_decision_score"],
+            -row["selected_switch_rate"],
+            -row.get("conditional_dm_sla_violation", 0.0),
+        ),
+    )
+    return best, "validation_improvement_under_coverage_and_risk_guard"
