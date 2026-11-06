@@ -319,6 +319,68 @@ action-dependent trajectories (e.g. independent ns-3/5G-LENA seeds or testbed
 measurements), calibrated constraint violations, sensitivity to confounding,
 latency and robustness across network slices.
 
+## November 6: Adaptive Pareto Hybrid (APH) -- new optional controller
+
+**Research goal:** combine conformal ranking, slice- and OOD-dependent
+constraint weighting, learned logged-behavior preferences, and verified
+incumbent hysteresis into one decision policy. Its main objective is better
+**all-decision** estimated utility subject to preserving the existing
+support/SLA/uncertainty/OOD eligibility envelope.
+
+The model is implemented in `agentic_ran/research_hybrid.py`, and can be
+enabled independently of the older optional candidates:
+
+```powershell
+cd Agentic-RAN
+git pull --ff-only
+$env:AGENTIC_RAN_EVAL_ADAPTIVE_HYBRID = "1"
+$env:AGENTIC_RAN_EVAL_CONFORMAL_RERANK = "1"
+$env:AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS = "1"
+$env:AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT = "1"
+$env:AGENTIC_RAN_EVAL_MATCHED_WRAPPERS = "1"
+$env:AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD = "1"
+docker compose -f docker-compose.publication.yml up --build --force-recreate --exit-code-from publication-test publication-test
+```
+
+The publication Docker Compose forwards the new flag into the container.
+
+Nine **preregistered** candidate profiles are tuned only on disjoint
+seen-validation episodes: exact conformal anchor, three per-slice risk
+profiles, behavior anchor, behavior+risk, incumbent hysteresis, and two
+adaptive risk/behavior/switch-margin combinations. The full holdout is used
+only **after** choosing one winner per independent crossfit fold.
+
+Profile selection is **baseline-anchored**: a new profile must improve the
+model-based full-row validation score by at least 0.00025, preserve >=99.5%
+of conformal decision coverage, and avoid estimated SLA-threshold
+exceedance regression >0.0025. Otherwise it selects the exact conformal
+anchor and reports that fact. The -0.12 abstention score remains an
+assumption and is *not* used to claim causal outcomes. As the hybrid and
+conformal selector have **exactly the same rejection mask**, their
+direct paired difference is invariant to the shared abstention penalty.
+
+The policy does **not** relax hard conformal support or risk constraints to
+recover eMBB coverage. Its benefit, if any, must come from more appropriate
+eligible action choice. It cannot by itself overcome the logged data's
+lack of within-episode scheduler/PRB changes or identify switch effects.
+The behavior prior is fitted only on the policy-fit training role, never
+on independent OPE or final-test outcomes.
+
+New output files in `results/publication`:
+- `research_hybrid_validation.csv`: nine-profile validation search per fold
+- `research_hybrid_final_tests.csv`: frozen winner on seen and unseen tests
+- `research_hybrid_cluster_evidence.csv`: paired experiment-level evidence
+- `research_hybrid_slice_scenario.csv`: per-slice actuation coverage
+- `research_hybrid_paired_statistics.json`: hybrid vs conformal;
+  also vs Behavior-KL, behavior tree and constraint-conditioned when enabled
+
+The publication summary gains `research_adaptive_hybrid` with selected
+profiles, baseline comparisons, per-cluster p-values and CIs. **A
+statistically significant model-based advantage is not real-network
+superiority**. Future work must provide action-dependent closed-loop
+trajectories, independent measurement of holding the incumbent, actual SLA,
+PRB/scheduler switching, latency, energy and fresh test scenarios.
+
 ## What must still be done for publication
 
 1. Replace random point-wise conformal calibration inside training roles with
