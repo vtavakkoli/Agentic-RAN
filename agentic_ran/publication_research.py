@@ -20,6 +20,9 @@ from agentic_ran.selective_evidence import cluster_accounting, combine_chunks, a
 from agentic_ran.publication_support import CONTEXT_COLUMNS
 from agentic_ran.research_support import ConformalActionSupport, rerank
 from agentic_ran.research_safe_improvement import select_safe_improvement
+from agentic_ran.research_hybrid import (
+    HYBRID_PROFILES, HybridConfig, select_hybrid, select_validation_profile,
+)
 from agentic_ran.research_behavior import (
     MODES, BehaviorPrior, select_behavior, stable_uniforms,
 )
@@ -57,6 +60,7 @@ def _actions_and_metrics(
     random_seed: int = 2026,
     safe_mode: str | None = None, advantage_penalty: float = 0.25,
     risk_weight: float = 0.2, behavior_anchor_weight: float = 0.05,
+    hybrid_profile: HybridConfig | None = None,
 ):
     """Paired evaluation with three explicitly distinct abstention estimands.
 
@@ -81,6 +85,7 @@ def _actions_and_metrics(
     total_entropy = 0.0
     selected_hold = 0
     verified_incumbent = 0
+    selected_switch = 0
     for start in range(0, n, batch_size):
         chunk = frame.iloc[start:start + batch_size]
         scores, sla, uncertainty, allowed, pre = _eligible_inputs(bundle, chunk, config)
@@ -107,7 +112,24 @@ def _actions_and_metrics(
         gate_totals["sla_and_uncertainty_rows"] += int(np.any(allowed & risk_ok, axis=1).sum())
         gate_totals["conditional_support_rows"] += int(np.any(allowed & p, axis=1).sum())
         gate_totals["joint_eligible_rows"] += int(np.any(eligible, axis=1).sum())
-        if safe_mode is not None:
+        if hybrid_profile is not None:
+            prior = (
+                behavior_model.probabilities(chunk)
+                if hybrid_profile.behavior_weight and behavior_model is not None
+                else None
+            )
+            decisions = select_hybrid(
+                scores, sla, uncertainty, allowed, p, incumbent_idx,
+                chunk["slice_type"].astype(str).to_numpy(),
+                pre["ood"],
+                profile=hybrid_profile, max_sla=config.sla_threshold,
+                max_uncertainty=config.uncertainty_threshold,
+                max_ood=config.ood_threshold, behavior_prior=prior,
+            )
+            changed = decisions.switched
+            selected_hold += int(decisions.verified_hold.sum())
+            verified_incumbent += int(decisions.eligible_incumbent.sum())
+        elif safe_mode is not None:
             prior = (
                 behavior_model.probabilities(chunk)
                 if safe_mode == "behavior_anchored_lcb" and behavior_model is not None
@@ -157,6 +179,9 @@ def _actions_and_metrics(
         counted += len(chunk)
         accepted += len(ok)
         reranked += int(changed.sum())
+        selected_switch += int(
+            np.sum(keep & (decisions.actions != incumbent_idx))
+        )
         sum_eligible += float(decisions.eligible_counts.sum())
         ope = evaluator.predict_all(chunk)
         weight = config.sla_weight + config.energy_weight + config.stability_weight
@@ -241,7 +266,11 @@ def _actions_and_metrics(
         "abstention_rate": 1 - accepted / max(counted, 1),
         "rerank_rate": reranked / max(counted, 1),
         "mean_eligible_actions": sum_eligible / max(counted, 1),
-        "policy_variant": safe_mode or behavior_mode or "conformal_rerank",
+        "policy_variant": (
+            hybrid_profile.name if hybrid_profile is not None
+            else safe_mode or behavior_mode or "conformal_rerank"
+        ),
+        "selected_switch_rate": selected_switch / max(counted, 1),
         "mean_action_entropy": total_entropy / max(counted, 1),
         "verified_incumbent_rate": verified_incumbent / max(counted, 1),
         "selected_hold_rate": selected_hold / max(counted, 1),
@@ -279,6 +308,7 @@ def run_optional_conformal_fold(
     switch_margin: float = 0.0,
     behavior_variants_enabled: bool = False,
     safe_improvement_enabled: bool = False,
+    hybrid_enabled: bool = False,
 ):
     roles = {
         role: (
@@ -372,8 +402,13 @@ def run_optional_conformal_fold(
     safe_cluster_rows = []
     safe_slice_rows = []
     safe_selections = []
+    hybrid_validation = []
+    hybrid_tests = []
+    hybrid_cluster_rows = []
+    hybrid_slice_rows = []
+    hybrid_selections = []
     behavior_model = None
-    if behavior_variants_enabled or safe_improvement_enabled:
+    if behavior_variants_enabled or safe_improvement_enabled or hybrid_enabled:
         behavior_model = BehaviorPrior.fit(
             policy_fit, bundle.actions, seed=seed + 9001,
         )
@@ -535,6 +570,64 @@ def run_optional_conformal_fold(
                     "support_method": winner["method"],
                     "support_alpha": winner["alpha"], **chosen_hyper, **metrics,
                 })
+    if hybrid_enabled:
+        hybrid_candidates = []
+        for profile in HYBRID_PROFILES:
+            metrics = _actions_and_metrics(
+                support, bundle, evaluator, selection_frame, config,
+                winner["method"], winner["alpha"],
+                sla_residual_margin=margin, behavior_model=behavior_model,
+                hybrid_profile=profile,
+            )
+            candidate = {
+                "fold": fold, "split": "validation", "profile": profile.name,
+                "support_method": winner["method"], "support_alpha": winner["alpha"],
+                **metrics,
+            }
+            hybrid_candidates.append(candidate)
+            hybrid_validation.append(candidate)
+        chosen, reason = select_validation_profile(hybrid_candidates, winner)
+        profile = next(x for x in HYBRID_PROFILES if x.name == chosen["profile"])
+        hybrid_selections.append({
+            "fold": fold, "profile": profile.name,
+            "selected_reason": reason,
+            "validation_full_row_score": chosen["unconditional_decision_score"],
+            "conformal_validation_full_row_score": winner["unconditional_decision_score"],
+            "validation_delta": (
+                chosen["unconditional_decision_score"]
+                - winner["unconditional_decision_score"]
+            ),
+            "validation_coverage": chosen["coverage"],
+            "validation_sla_exceedance": chosen["conditional_dm_sla_violation"],
+            "conformal_validation_coverage": winner["coverage"],
+            "conformal_validation_sla_exceedance": (
+                winner["conditional_dm_sla_violation"]
+            ),
+            "selection_scope": "seen_validation_only_before_final_test",
+            "no_test_tuning": True,
+            "assumed_abstention_utility": -0.12,
+        })
+        for split, final_frame in (("seen", seen), ("unseen", unseen)):
+            metrics = _actions_and_metrics(
+                support, bundle, evaluator, final_frame, config,
+                winner["method"], winner["alpha"],
+                sla_residual_margin=margin, collect_clusters=True,
+                switch_margin=switch_margin,
+                behavior_model=behavior_model, hybrid_profile=profile,
+            )
+            hybrid_cluster_rows.extend([
+                {"fold": fold, "split": split, "profile": profile.name, **row}
+                for row in metrics.pop("cluster_rows")
+            ])
+            hybrid_slice_rows.extend([
+                {"fold": fold, "split": split, "profile": profile.name, **row}
+                for row in metrics.pop("slice_scenario")
+            ])
+            hybrid_tests.append({
+                "fold": fold, "split": split, "profile": profile.name,
+                "support_method": winner["method"],
+                "support_alpha": winner["alpha"], **metrics,
+            })
     safe_eligible = [s for s in safe_selections if s["validation_feasible"]]
     safe_meta = (
         max(safe_eligible, key=lambda x: x["validation_objective"])["mode"]
@@ -602,6 +695,16 @@ def run_optional_conformal_fold(
         "final_tests": results,
         "cluster_evidence": clusters,
         "slice_scenario": slices,
+        "adaptive_hybrid": {
+            "enabled": hybrid_enabled,
+            "validation_grid": hybrid_validation,
+            "final_tests": hybrid_tests,
+            "cluster_evidence": hybrid_cluster_rows,
+            "slice_scenario": hybrid_slice_rows,
+            "selections": hybrid_selections,
+            "selection_scope": "seen_validation_only",
+            "default_is_exact_conformal_baseline": True,
+        },
         "safe_improvement": {
             "enabled": safe_improvement_enabled,
             "validation_grid": safe_validation,
