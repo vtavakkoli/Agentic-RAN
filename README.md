@@ -188,6 +188,25 @@ Possible verdicts are:
 
 ## Core platform capabilities
 
+### Agentic-RAN v3: Joint-Slice Advantage-Gated Control (research)
+
+Enable the optional JAGC model for **actual prepared COMMAG recordings**
+while preserving the original Agentic-RAN controller as the baseline:
+
+~~~powershell
+$env:AGENTIC_RAN_EVAL_JOINT_SLICE_ADVANTAGE = "1"
+docker compose -f docker-compose.publication.yml up --build --force-recreate --exit-code-from publication-test publication-test
+~~~
+
+It aligns contemporaneous eMBB/mMTC/URLLC cells at each base
+station and timestamp, uses training-only PRB-budget proxies, solves
+the supported three-slice allocation with a multiple-choice knapsack,
+and promotes only validation-supported estimated advantages. Outputs
+are written to results/publication/research_joint_slice_*. The evaluation
+is **offline independent direct-method estimation**, not observed
+network intervention or evidence that a 10% improvement exists.
+See [JAGC methods and output](docs/JOINT_SLICE_ADVANTAGE.md).
+
 ### PULSE-RAN: real COMMAG traces versus synthetic simulation
 
 **Use the real-data workflow to analyze PULSE-RAN recommendations on

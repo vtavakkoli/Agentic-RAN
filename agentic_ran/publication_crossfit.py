@@ -352,6 +352,9 @@ def run_crossfit_benchmark(
     hybrid_enabled = (
         os.environ.get("AGENTIC_RAN_EVAL_ADAPTIVE_HYBRID", "0") == "1"
     )
+    joint_slice_enabled = (
+        os.environ.get("AGENTIC_RAN_EVAL_JOINT_SLICE_ADVANTAGE", "0") == "1"
+    )
     conformal_rerank_enabled = (
         os.environ.get("AGENTIC_RAN_EVAL_CONFORMAL_RERANK", "0") == "1"
         or behavior_variants_enabled or safe_improvement_enabled or hybrid_enabled
@@ -378,6 +381,10 @@ def run_crossfit_benchmark(
     hybrid_cluster_rows = []
     hybrid_slice_rows = []
     hybrid_selection_rows = []
+    joint_validation_rows = []
+    joint_test_rows = []
+    joint_evidence_frames = []
+    joint_selections = []
     fold_baselines: list[pd.DataFrame] = []
     decision_tables: list[pd.DataFrame] = []
     comparison_models = ["proposed", "fqi", "cql_linear", "behavior_hgb"]
@@ -518,6 +525,32 @@ def run_crossfit_benchmark(
                     "selected_mode": extra_safe["meta_selected_mode"],
                     "selection_scope": extra_safe["meta_selection_scope"],
                 })
+
+        if joint_slice_enabled:
+            from agentic_ran.research_joint_slice_advantage import run_joint_slice_fold
+
+            trial_joint = run_joint_slice_fold(
+                bundle, evaluator, policy_fit, validation_fold,
+                seen_fold, unseen_fold, calibrated, switch_margin,
+                fold=fold_name, seed=seed + 34000 + fold_index * 97,
+            )
+            joint_validation_rows.extend(trial_joint["validation"])
+            joint_test_rows.extend(trial_joint["final_tests"])
+            joint_evidence_frames.append(trial_joint["decisions"])
+            joint_selections.append({
+                "fold": fold_name,
+                "selected_profile": trial_joint["selected_profile"],
+                "selection_reason": trial_joint["selection_reason"],
+                "selection_uses_final_test": False,
+                "train_only_budget": trial_joint["budget"],
+                "validation_model_headroom": trial_joint["validation_headroom"],
+                "alignment": trial_joint["alignment"],
+                "paired_clusters": trial_joint["paired_clusters"],
+                "minimum_validation_gain": trial_joint["minimum_validation_gain"],
+                "maximum_validation_sla_regression": (
+                    trial_joint["maximum_validation_sla_regression"]
+                ),
+            })
 
         for split_name, test in (("seen", seen_fold), ("unseen", unseen_fold)):
             fold_ablations: list[dict[str, Any]] = []
@@ -889,6 +922,15 @@ def run_crossfit_benchmark(
         "churn": "open-loop selected-action changes across consecutive logged states, not realized actuation",
         "support": "slice-level action overlap plus a sampled state-conditional diagnostic; no causal guarantee",
     }
+    if joint_slice_enabled:
+        warnings.append(
+            "Experimental Joint-Slice Advantage-Gated Control uses synchronized "
+            "per-UE averaged COMMAG slice contexts and a TRAIN-derived PRB-budget "
+            "proxy, not verified physical gNB capacity. Independent model-based "
+            "OPE is not a measured causal network intervention. Validation may "
+            "retain the original method and results must only be compared on "
+            "identically aligned three-slice BS-second populations."
+        )
     if conformal_rerank_enabled:
         if any(not x.get("validation_feasible", False) for x in conformal_selection):
             warnings.append(
@@ -992,6 +1034,22 @@ def run_crossfit_benchmark(
         "claim_scope": claim_scope,
         "tradeoff_summary": tradeoffs,
         "state_conditional_overlap": overlap_summary,
+        "research_joint_slice_advantage": {
+            "enabled": joint_slice_enabled,
+            "label": "Agentic-RAN v3 Joint-Slice Advantage-Gated Control",
+            "default_policy_unchanged": True,
+            "evaluation_populations": (
+                "complete aligned eMBB/mMTC/URLLC base-station-seconds only"
+            ),
+            "selection_uses_test": False,
+            "selection": joint_selections,
+            "comparison": joint_test_rows,
+            "claims": (
+                "independent direct-method estimates only, no executed "
+                "PRB interventions, no physical budget certificate"
+            ),
+            "publication_ready_as_real_ran_superiority": False,
+        },
         "research_adaptive_hybrid": {
             "enabled": hybrid_enabled,
             "validation_grid_profiles": (
@@ -1124,6 +1182,23 @@ def run_crossfit_benchmark(
 
     calibration = pd.concat(calibration_tables, ignore_index=True)
     cql_validation = pd.concat(cql_tables, ignore_index=True)
+    if joint_slice_enabled:
+        if not joint_evidence_frames:
+            raise RuntimeError("joint-slice evaluation produced no evidence")
+        joint_evidence = pd.concat(joint_evidence_frames, ignore_index=True)
+        pd.DataFrame(joint_validation_rows).to_csv(
+            destination / "research_joint_slice_validation.csv", index=False,
+        )
+        pd.DataFrame(joint_test_rows).to_csv(
+            destination / "research_joint_slice_final_tests.csv", index=False,
+        )
+        joint_evidence.to_csv(
+            destination / "research_joint_slice_decisions.csv.gz",
+            index=False, compression="gzip",
+        )
+        (destination / "research_joint_slice_selection.json").write_text(
+            json.dumps(joint_selections, indent=2), encoding="utf-8",
+        )
     if hybrid_enabled:
         pd.DataFrame(hybrid_validation_rows).to_csv(
             destination / "research_hybrid_validation.csv", index=False,
