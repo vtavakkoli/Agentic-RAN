@@ -296,10 +296,13 @@ def choose_action(
     *, twin: CalibratedTwin,
     cql: LinearCQLController | None = None,
     quantile: QuantileCVaRController | None = None,
-    risk_weight: float = .3,
+    risk_weight: float = .3, blend_weight: float = .5,
 ) -> int:
     """Shared action support/one-step queue risk, no hidden unsafe fallback."""
-    if mode not in {"behavior", "twin_greedy", "twin_cql", "distributional_cvar"}:
+    if mode not in {
+        "behavior", "twin_greedy", "twin_cql", "distributional_cvar",
+        "twin_cql_cvar_hybrid",
+    }:
         raise ValueError("unknown comparison policy")
     if mode == "behavior":
         if state[2] > .45:
@@ -308,7 +311,10 @@ def choose_action(
             return 2
         return 0
     safe, predicted = twin.eligible(
-        state, t, risk_mode="cvar" if mode == "distributional_cvar" else "upper",
+        state, t, risk_mode=(
+            "cvar" if mode in ("distributional_cvar", "twin_cql_cvar_hybrid")
+            else "upper"
+        ),
     )
     if not safe.any():
         return -1  # external environment executes explicit hold-last
@@ -321,10 +327,19 @@ def choose_action(
         if cql is None:
             raise ValueError("CQL critic is missing")
         score = cql.predict(state, previous, t)
-    else:
+    elif mode == "distributional_cvar":
         if quantile is None:
             raise ValueError("distributional critic is missing")
         score = quantile.scores(state, previous, t, risk_weight)
+    else:
+        if quantile is None or cql is None:
+            raise ValueError("hybrid requires both trained critics")
+        if not 0 <= blend_weight <= 1:
+            raise ValueError("hybrid blend weight must be in [0,1]")
+        score = (
+            (1 - blend_weight) * cql.predict(state, previous, t)
+            + blend_weight * quantile.scores(state, previous, t, risk_weight)
+        )
     # Identical switching disutility for every non-behavior policy.
     score = score - .055 * (np.arange(N_ACTIONS) != previous)
     score = np.where(safe, score, -np.inf)
