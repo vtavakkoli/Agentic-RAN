@@ -240,6 +240,8 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     for selected in joint["selection"]:
         assert not selected["selection_uses_final_test"]
         assert selected["train_only_budget"]["training_groups"] > 0
+        assert selected["validation_model_headroom"]["validation_only"]
+        assert selected["validation_model_headroom"]["optimistic_model_headroom_absolute"] >= -1e-9
         assert set(selected["alignment"]) == {"validation", "seen", "unseen"}
         assert selected["selected_profile"] in {
             "original_agentic_ran", "joint_utility", "joint_margin_005",
