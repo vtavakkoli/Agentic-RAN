@@ -65,10 +65,11 @@ Twin-CQL versus matched greedy twin (60 independent test episodes per split):
 
 Both pairwise CQL improvements are statistically resolved for this toy
 experiment under the stated per-split tests; they are **not** universal
-superiority. The unseen heuristic is much stronger than all learned
+superiority. Episode-level win rates were 26.7% seen and 58.3% unseen:
+the mean gains are not uniform across episodes. The unseen heuristic is much stronger than all learned
 controllers, and CQL's unseen URLLC violation rate is **27.5%**, which
 would not be suitable for reliability-critical deployment. The modest
-URRLC increase over greedy was within an exploratory 1.5 percentage-point
+URLLC increase over greedy was within an exploratory 1.5 percentage-point
 tolerance, not evidence of operational safety.
 
 The CVaR and hybrid models have no statistically resolved improvements
