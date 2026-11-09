@@ -144,6 +144,7 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     monkeypatch.setenv("AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_ADAPTIVE_HYBRID", "1")
+    monkeypatch.setenv("AGENTIC_RAN_EVAL_JOINT_SLICE_ADVANTAGE", "1")
     data = tmp_path / "synthetic.csv.gz"
     output = tmp_path / "publication"
     _synthetic_publication_frame().to_csv(data, index=False, compression="gzip")
@@ -230,6 +231,34 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     assert (output / "research_conformal_slice_scenario.csv").is_file()
     assert (output / "research_conformal_validation.csv").is_file()
     assert (output / "research_conformal_final_tests.csv").is_file()
+    joint = summary["research_joint_slice_advantage"]
+    assert joint["enabled"]
+    assert not joint["selection_uses_test"]
+    assert len(joint["selection"]) == 2
+    assert len(joint["comparison"]) == 4
+    assert not joint["publication_ready_as_real_ran_superiority"]
+    for selected in joint["selection"]:
+        assert not selected["selection_uses_final_test"]
+        assert selected["train_only_budget"]["training_groups"] > 0
+        assert set(selected["alignment"]) == {"validation", "seen", "unseen"}
+        assert selected["selected_profile"] in {
+            "original_agentic_ran", "joint_utility", "joint_margin_005",
+            "joint_margin_010", "joint_uncertainty_025",
+            "joint_uncertainty_050", "joint_switch_010",
+        }
+    for file in (
+        "research_joint_slice_validation.csv",
+        "research_joint_slice_final_tests.csv",
+        "research_joint_slice_decisions.csv.gz",
+        "research_joint_slice_selection.json",
+    ):
+        assert (output / file).is_file()
+    joint_rows = pd.read_csv(output / "research_joint_slice_final_tests.csv")
+    assert set(joint_rows["split"]) == {"seen", "unseen"}
+    assert (joint_rows["represented_slice_rows"] > 0).all()
+    joint_decisions = pd.read_csv(output / "research_joint_slice_decisions.csv.gz")
+    assert set(joint_decisions["split"]) == {"seen", "unseen"}
+
     hybrid = summary["research_adaptive_hybrid"]
     assert hybrid["enabled"]
     assert len(hybrid["held_out_selections"]) == 2
