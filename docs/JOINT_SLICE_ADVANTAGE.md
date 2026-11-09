@@ -92,6 +92,21 @@ estimand using aggregated three-slice states. **Do not compare their
 absolute utility values**. Instead, use the original-vs-joint delta
 provided by JAGC *on its matched population*.
 
+## 10% target: validation-only optimistic model headroom
+
+The selected-fold JSON also contains `validation_model_headroom`.
+It reports the independent outcome evaluator's *optimistic* best
+supported joint configuration on validation BS-seconds (under the
+same PRB-budget proxy), compared with the original policy on those
+exact same cells. It includes a +10% relative target indicator.
+**It is not a statistically valid upper confidence bound, executable
+control policy, proof of achievable improvement, or held-out result**.
+The evaluator's winner can be biased upward by maximizing noisy
+predictions, so the estimate is only a feasibility diagnostic.
+
+The original COMMAG all-decision value (0.713381) is on a different
+population; do not compare it to this aligned-cell oracle number.
+
 ## What JAGC does NOT yet establish
 
 - COMMAG recorded historical policies; proposed joint interventions
