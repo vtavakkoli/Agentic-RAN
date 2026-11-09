@@ -53,3 +53,15 @@ services:
       - /workspace/configs/final_publication.yaml
       - --seed
       - ${AGENTIC_RAN_PUBLICATION_SEED:-2026}
+
+  pulse-commag-shadow:
+    <<: *study
+    depends_on:
+      prepare-full-commag:
+        condition: service_completed_successfully
+    entrypoint: ["python", "-m", "agentic_ran.research_pulse_commag"]
+    command:
+      - --data
+      - /workspace/data/prepared/commag-publication/commag_publication_transitions.csv.gz
+      - --output
+      - /workspace/results/pulse-commag

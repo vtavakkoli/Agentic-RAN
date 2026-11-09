@@ -188,6 +188,22 @@ Possible verdicts are:
 
 ## Core platform capabilities
 
+### PULSE-RAN: real COMMAG traces versus synthetic simulation
+
+**Use the real-data workflow to analyze PULSE-RAN recommendations on
+Colosseum COMMAG recordings:**
+
+~~~powershell
+git pull --ff-only
+docker compose -f docker-compose.publication.yml up --build --force-recreate --exit-code-from pulse-commag-shadow pulse-commag-shadow
+~~~
+
+This runs the prepared COMMAG dataset shadow analysis and writes
+results/pulse-commag/. It is **not** a PULSE actuation experiment,
+does not start ns-3 or a new Colosseum run, and does not establish
+counterfactual reward superiority. See
+[the corrected real-data instructions](docs/PULSE_RAN_COMMAG.md).
+
 ### PULSE-RAN: priority-driven baseline in the action-dependent twin
 
 **PULSE-RAN** (*Priority-driven URLLC and Load-Sensitive Engine*) is the
