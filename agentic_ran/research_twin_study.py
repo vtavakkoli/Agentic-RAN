@@ -24,7 +24,7 @@ from agentic_ran.research_twin_offline import (
     choose_action, fit_calibrated_twin, fit_linear_cql, fit_quantile_td,
 )
 
-MODELS = ("heuristic", "twin_greedy", "twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid")
+MODELS = ("heuristic", "twin_greedy", "twin_greedy_cvar_gate", "twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid")
 RISK_REGRESSION_TOLERANCE = 0.015
 MIN_VALIDATION_UTILITY_GAIN = 0.003
 
@@ -141,7 +141,7 @@ def run_twin_study(
         raise ValueError("need >=12 training episodes for disjoint twin calibration")
     # Episode IDs and environment seeds do not overlap between partitions.
     logged = generate_logged_transitions(
-        seed=seed + 10, episodes=train_episodes, steps=steps,
+        seed=seed + 10000000, episodes=train_episodes, steps=steps,
     )
     action_changes = int(np.sum(
         (logged.action[1:] != logged.action[:-1])
@@ -171,6 +171,9 @@ def run_twin_study(
     candidates = {
         "heuristic": [{"description": "heuristic"}],
         "twin_greedy": [{"description": "one_step_greedy"}],
+        "twin_greedy_cvar_gate": [
+            {"description": "one_step_greedy_with_cvar_queue_risk_mask"}
+        ],
         "twin_cql": [
             {"description": f"alpha={a}", "alpha": a}
             for a in (0.05, 0.25)
@@ -186,13 +189,19 @@ def run_twin_study(
         ],
     }
     validation_scenarios = ("normal", "congested", "bursty")
-    validation_seed = seed + 100000
+    validation_seed = seed + 20000000
     baseline_val = _evaluate(
         selector=selector("twin_greedy"), seed=validation_seed,
         episodes=validation_episodes, steps=steps,
         scenarios=validation_scenarios, label="twin_greedy",
     )
     baseline_metrics = _aggregate(baseline_val)
+    conservative_baseline_val = _evaluate(
+        selector=selector("twin_greedy_cvar_gate"), seed=validation_seed,
+        episodes=validation_episodes, steps=steps,
+        scenarios=validation_scenarios, label="twin_greedy_cvar_gate",
+    )
+    conservative_baseline_metrics = _aggregate(conservative_baseline_val)
     val_grid = []
     frozen = {}
     validation_flags = {}
@@ -201,6 +210,7 @@ def run_twin_study(
         for hyper in settings:
             trial = (
                 baseline_val if family == "twin_greedy"
+                else conservative_baseline_val if family == "twin_greedy_cvar_gate"
                 else _evaluate(
                     selector=selector(
                         family, **{k: v for k, v in hyper.items()
@@ -212,12 +222,22 @@ def run_twin_study(
                 )
             )
             metrics = _aggregate(trial)
-            acceptable = _regression_safe(metrics, baseline_metrics)
+            matched_reference = (
+                conservative_baseline_metrics
+                if family in ("distributional_cvar", "twin_cql_cvar_hybrid")
+                else baseline_metrics
+            )
+            acceptable = _regression_safe(metrics, matched_reference)
             record = {
                 "family": family, "hyperparameters": hyper,
                 "metrics": metrics,
                 "estimated_sla_non_regression": acceptable,
-                "objective": _validation_criterion(metrics, baseline_metrics),
+                "objective": _validation_criterion(metrics, matched_reference),
+                "validation_reference": (
+                    "twin_greedy_cvar_gate"
+                    if family in ("distributional_cvar", "twin_cql_cvar_hybrid")
+                    else "twin_greedy"
+                ),
             }
             options.append(record)
             val_grid.append(record)
@@ -238,7 +258,8 @@ def run_twin_study(
     # and needs a minimum practical gain to promote a learned controller.
     permitted = [
         (key, value) for key, value in validation_flags.items()
-        if value["risk_feasible"]
+        if key in ("twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid")
+        and value["risk_feasible"]
         and value["validation_metrics"]["return"]
         >= baseline_metrics["return"] + MIN_VALIDATION_UTILITY_GAIN
     ]
@@ -248,10 +269,11 @@ def run_twin_study(
     )
     row_outputs = []
     comparisons = {}
+    matched_gate_comparisons = {}
     score_tables = {}
     for split, test_seed, scenarios in (
-        ("seen", seed + 200000, ("normal", "congested", "bursty")),
-        ("unseen", seed + 300000, ("weak_channel",)),
+        ("seen", seed + 30000000, ("normal", "congested", "bursty")),
+        ("unseen", seed + 40000000, ("weak_channel",)),
     ):
         test = {}
         for family, hyper in frozen.items():
@@ -270,18 +292,39 @@ def run_twin_study(
         baseline = test["twin_greedy"]
         comparisons[split] = {}
         score_tables[split] = {key: _aggregate(value) for key, value in test.items()}
+        same_gate = {}
         for j, family in enumerate(
             ("twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid")
         ):
+            reference_name = (
+                "twin_greedy_cvar_gate"
+                if family in ("distributional_cvar", "twin_cql_cvar_hybrid")
+                else "twin_greedy"
+            )
             comparisons[split][family] = _paired_inference(
                 test[family], baseline,
                 seed=seed + 400000 + j * 10 + (0 if split == "seen" else 1),
             )
             comparisons[split][family]["sla_non_regression"] = (
-                _regression_safe(score_tables[split][family],
-                                 score_tables[split]["twin_greedy"])
+                _regression_safe(
+                    score_tables[split][family],
+                    score_tables[split]["twin_greedy"],
+                )
+            )
+            same_gate[family] = _paired_inference(
+                test[family], test[reference_name],
+                seed=seed + 500000 + j * 10 + (0 if split == "seen" else 1),
+            )
+            same_gate[family]["reference"] = reference_name
+            same_gate[family]["sla_non_regression"] = (
+                _regression_safe(
+                    score_tables[split][family],
+                    score_tables[split][reference_name],
+                )
             )
         _holm_adjust(comparisons[split])
+        _holm_adjust(same_gate)
+        matched_gate_comparisons[split] = same_gate
     rigorous = {}
     for family in ("twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid"):
         seen = comparisons["seen"][family]
@@ -346,7 +389,8 @@ def run_twin_study(
         "validation_selected_family": selected_family,
         "validation_selection_used_final_test": False,
         "final_test_metrics": score_tables,
-        "paired_vs_same_gate_greedy": comparisons,
+        "paired_vs_original_twin_greedy": comparisons,
+        "paired_vs_same_risk_gate_greedy": matched_gate_comparisons,
         "superiority_checks": rigorous,
         "publication_ready_as_real_ran_superiority": False,
         "limitations": [
@@ -355,6 +399,8 @@ def run_twin_study(
             "Hold fallback is physically simulated, including any adverse consequences, not declared safe.",
             "Multiple controller comparisons require independently replicated validation.",
             "The original static COMMAG dataset cannot independently identify control effects.",
+            "CVaR has a stricter tail-risk gate, so comparisons with both the original and a same-gate greedy baseline are provided.",
+            "Holm adjustment covers three contenders within each split; split families remain exploratory.",
         ],
     }
     return summary, pd.DataFrame(row_outputs)
