@@ -193,7 +193,7 @@ def fit_quantile_td(
 @dataclass
 class CalibratedTwin:
     dynamics: object
-    state_support: tuple[NearestNeighbors, ...]
+    state_support: tuple[NearestNeighbors | None, ...]
     support_thresholds: np.ndarray
     queue_upper_margin: np.ndarray
     queue_cvar_margin: np.ndarray
@@ -219,6 +219,7 @@ class CalibratedTwin:
         query = np.asarray(state, dtype=float).reshape(1, 9)
         distances = np.array([
             estimator.kneighbors(query, n_neighbors=1)[0][0, 0]
+            if estimator is not None else np.inf
             for estimator in self.state_support
         ])
         supported = distances <= self.support_thresholds
@@ -278,7 +279,11 @@ def fit_calibrated_twin(
     for action in range(N_ACTIONS):
         states = train.state[fit & (train.action == action)]
         if len(states) < 10:
-            raise ValueError(f"insufficient offline support for action {action}")
+            # Sparse actions remain unavailable instead of claiming overlap
+            # or aborting every controller on a thin research dataset.
+            neighbors.append(None)
+            limits.append(-1.0)
+            continue
         estimator = NearestNeighbors(n_neighbors=2).fit(states)
         leave_self = estimator.kneighbors(states, n_neighbors=2)[0][:, 1]
         neighbors.append(estimator)
