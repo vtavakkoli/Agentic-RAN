@@ -13,6 +13,7 @@ from agentic_ran.research_twin_offline import (
 )
 from agentic_ran.research_twin_study import run_twin_study, _paired_inference
 from agentic_ran.research_pulse_ran import NAME, EXPANSION, select_pulse_ran
+from agentic_ran.research_pulse_report import format_report
 
 
 def test_actions_are_valid_allocation_vectors():
@@ -184,3 +185,17 @@ def test_pulse_pairwise_has_zero_only_when_compared_to_identical_trajectory():
         for name, result in pairs.items():
             assert 0 <= result["holm_adjusted_p"] <= 1
             assert result["n_independent_episodes"] == 6
+
+
+def test_pulse_report_prints_ranked_results_and_comparison_intervals():
+    summary, _ = run_twin_study(
+        seed=93, train_episodes=18, validation_episodes=6,
+        test_episodes=6, steps=6,
+    )
+    rendered = format_report(summary)
+    assert "PULSE-RAN | Priority-driven URLLC" in rendered
+    assert "PULSE-RAN Gated" in rendered
+    assert "Twin-CQL" in rendered
+    assert "challenger minus PULSE-RAN" in rendered
+    assert "SIMULATED INTERVENTIONS ONLY" in rendered
+    assert "SEEN" in rendered and "UNSEEN" in rendered
