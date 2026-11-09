@@ -381,6 +381,75 @@ superiority**. Future work must provide action-dependent closed-loop
 trajectories, independent measurement of holding the incumbent, actual SLA,
 PRB/scheduler switching, latency, energy and fresh test scenarios.
 
+## November 9: Twin-CQL and Distributional CVaR — action-dependent experiment
+
+Research methods: (1) a digital-twin-assisted linear finite-action
+Conservative Q-Learning (CQL) controller, and (2) quantile-Huber fitted
+Bellman return distributions with a lower-tail Conditional Value-at-Risk
+(CVaR) objective. A third CQL/CVaR blend tests their complementarity.
+The same dynamically logged toy training episodes feed both learners.
+
+Files:
+
+- agentic_ran/research_twin_environment.py: multi-slice action-dependent
+  toy simulator for eMBB/mMTC/URLLC with five PRB-split actions;
+  randomized, changing action trajectories and explicit executed holds.
+- agentic_ran/research_twin_offline.py: conservative logsumexp Bellman
+  critic, quantile critic with CVaR objective, episode-calibrated learned
+  digital twin, and per-action local state support gate.
+- agentic_ran/research_twin_study.py: independent train/validation/
+  seen-test/unseen-test partitions, fixed paired episode seeds, hold-last
+  outcomes measured by the simulator, Holm-adjusted comparisons.
+
+The implementation is a finite-action linear CQL/quantile-TD research
+variant, NOT a faithful deep CQL, QR-DQN or CODAC reproduction.
+It is also NOT real Colosseum, ns-3/5G-LENA, srsRAN, or O-RAN deployment.
+Toy SLA limits and queue dynamics are constructed, not externally
+validated physics or measured power/latency. **Do not attribute the
+resulting utility or SLA values to COMMAG or an actual wireless network.**
+
+Run a larger independently evaluated simulated study:
+
+~~~powershell
+cd Agentic-RAN
+git pull --ff-only
+python -m agentic_ran.research_twin_study --seed 2026 --train-episodes 160 --validation-episodes 40 --test-episodes 60 --steps 24 --output results/twin_cql_cvar_study.json
+~~~
+
+The JSON reports the action-switch audit, the validation-only selected
+hyperparameters, the separately calibrated world-model residual margins,
+the validation-selected family, seen and unseen realized returns, all
+three per-slice SLA exceedance rates, switching and abstention, and
+paired episode-bootstrap 95% CIs plus Holm-adjusted sign-randomization
+p-values. The neighboring *_episodes.csv preserves individual paired
+episode results.
+
+For honest interpretation:
+
+- No test or validation transitions train the critics; the twin's risk
+  residuals are calibrated on episodes disjoint from its training fit.
+  Those margins are empirical diagnostics, not certified safety bounds.
+- Every critic shares per-action support constraints. When no action is
+  eligible, the actual simulator continues the incumbent and observes
+  the resulting queue/reward; it is NOT credited an arbitrary penalty.
+- CQL is compared with the same-mask greedy world-model baseline;
+  distributional CVaR and the blend are compared both to that baseline
+  and to a *CVaR-mask-matched* greedy policy to isolate the value of
+  learning from the effect of stricter risk gating.
+- Hyperparameters and promotion eligibility use validation episodes
+  only; both final test environments are held out. Three contenders
+  per split have Holm-adjusted p-values; multiple split comparisons
+  and model selection still warrant independent replication.
+- A positive paired test here shows only advantage in this toy
+  intervention environment. It does not establish real-RAN causal
+  performance, guarantee SLA compliance, or fix COMMAG's zero observed
+  within-episode action switches.
+
+Research foundations are Kumar et al., NeurIPS 2020 Conservative
+Q-Learning, and Ma et al., NeurIPS 2021 Conservative Offline
+Distributional Reinforcement Learning. Their theorems cannot be
+transferred to our simplified linear implementation.
+
 ## What must still be done for publication
 
 1. Replace random point-wise conformal calibration inside training roles with
