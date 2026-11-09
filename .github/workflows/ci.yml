@@ -44,6 +44,22 @@ jobs:
         with:
           name: safe-improvement-synthetic-only
           path: results/research_safe_synthetic.json
+      - name: Twin-CQL and CVaR action-dependent study (toy, not COMMAG)
+        if: matrix.python-version == '3.13'
+        env:
+          OPENBLAS_NUM_THREADS: "1"
+        run: |
+          python -m agentic_ran.research_twin_study --seed 2026 --train-episodes 30 --validation-episodes 8 --test-episodes 12 --steps 12 --output results/twin_cql_cvar_study.json
+          test -s results/twin_cql_cvar_study.json
+          test -s results/twin_cql_cvar_study_episodes.csv
+      - name: Upload toy interventional study
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: twin-cql-cvar-simulated-only
+          path: |
+            results/twin_cql_cvar_study.json
+            results/twin_cql_cvar_study_episodes.csv
       - name: Upload coverage
         if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4
