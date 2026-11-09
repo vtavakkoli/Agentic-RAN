@@ -497,6 +497,63 @@ def paired_joint_clusters(
     return result
 
 
+def validation_model_headroom(
+    prepared: JointInputs, *, relative_target: float = .10,
+) -> dict[str, Any]:
+    """Optimistic validation-only independent-DM diagnostic.
+
+    Deliberately chooses the best action using evaluator outputs, so the
+    result is NOT an executable policy, a statistical/causal upper bound
+    or a permitted selection rule. It diagnoses whether the desired
+    relative improvement is even visible in this biased scoring model.
+    """
+    if not 0 < relative_target < 1:
+        raise ValueError("relative target must be between zero and one")
+    reference = prepared.evaluator_utility[
+        np.arange(len(prepared.budgets))[:, None],
+        np.arange(3)[None, :],
+        prepared.reference_idx,
+    ].mean(axis=1)
+    optimistic = reference.copy()
+    feasible = 0
+    for g in range(len(reference)):
+        eligible = prepared.eligible[g] & prepared.evaluator_supported[g]
+        candidate, predicted = exact_multiple_choice_knapsack(
+            prepared.evaluator_utility[g] / 3.0, eligible,
+            prepared.prb_costs, int(prepared.budgets[g]),
+        )
+        if candidate is None:
+            continue
+        feasible += 1
+        # Best model-predicted joint assignment is also allowed to retain
+        # the original assignment; never diagnose negative headroom.
+        optimistic[g] = max(float(reference[g]), predicted)
+    baseline = float(reference.mean())
+    ceiling = float(optimistic.mean())
+    return {
+        "validation_only": True,
+        "independent_DM_reference_mean": baseline,
+        "optimistic_evaluator_selected_mean": ceiling,
+        "optimistic_model_headroom_absolute": ceiling - baseline,
+        "optimistic_model_headroom_relative": (
+            (ceiling - baseline) / abs(baseline)
+            if abs(baseline) > 1e-9 else None
+        ),
+        "target_relative_gain": relative_target,
+        "target_comparison_score": baseline * (1.0 + relative_target),
+        "model_headroom_reaches_target": (
+            ceiling >= baseline * (1.0 + relative_target)
+            if baseline >= 0 else False
+        ),
+        "feasible_joint_group_rate": feasible / max(len(reference), 1),
+        "interpretation": (
+            "optimistic validation model sensitivity using evaluator to pick "
+            "actions: NOT deployable policy, causal upper bound or held-out "
+            "success prediction. Do not optimize policy on these oracle choices."
+        ),
+    }
+
+
 def run_joint_slice_fold(
     bundle: Any, evaluator: Any,
     policy_fit: pd.DataFrame, validation: pd.DataFrame,
@@ -511,6 +568,7 @@ def run_joint_slice_fold(
     val = prepare_joint_inputs(
         bundle, evaluator, validation, calibrated, switch_margin, budgets,
     )
+    model_headroom = validation_model_headroom(val)
     validation_results = []
     for profile in PROFILES:
         result, _ = evaluate_joint_profile(
@@ -568,6 +626,7 @@ def run_joint_slice_fold(
     return {
         "fold": fold,
         "budget": budgets,
+        "validation_headroom": model_headroom,
         "validation": validation_results,
         "final_tests": tests,
         "decisions": pd.concat(evidence, ignore_index=True),
