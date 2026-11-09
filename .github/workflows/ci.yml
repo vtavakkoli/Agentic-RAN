@@ -52,22 +52,6 @@ jobs:
           python -m agentic_ran.research_twin_study --seed 2026 --train-episodes 30 --validation-episodes 8 --test-episodes 12 --steps 12 --output results/twin_cql_cvar_study.json
           test -s results/twin_cql_cvar_study.json
           test -s results/twin_cql_cvar_study_episodes.csv
-      - name: Larger independent twin CQL/CVaR replication (PR 82 only)
-        if: matrix.python-version == '3.13' && github.event_name == 'pull_request' && github.event.pull_request.number == 82
-        env:
-          OPENBLAS_NUM_THREADS: "1"
-        run: |
-          python -m agentic_ran.research_twin_study --seed 2028 --train-episodes 160 --validation-episodes 40 --test-episodes 60 --steps 24 --output results/twin_cql_cvar_replication.json
-          test -s results/twin_cql_cvar_replication.json
-          test -s results/twin_cql_cvar_replication_episodes.csv
-      - name: Upload larger twin replication
-        if: matrix.python-version == '3.13' && github.event_name == 'pull_request' && github.event.pull_request.number == 82
-        uses: actions/upload-artifact@v4
-        with:
-          name: twin-cql-cvar-larger-replication-only
-          path: |
-            results/twin_cql_cvar_replication.json
-            results/twin_cql_cvar_replication_episodes.csv
       - name: Upload toy interventional study
         if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4
