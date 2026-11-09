@@ -300,8 +300,8 @@ def choose_action(
 ) -> int:
     """Shared action support/one-step queue risk, no hidden unsafe fallback."""
     if mode not in {
-        "behavior", "twin_greedy", "twin_cql", "distributional_cvar",
-        "twin_cql_cvar_hybrid",
+        "behavior", "twin_greedy", "twin_greedy_cvar_gate", 
+        "twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid",
     }:
         raise ValueError("unknown comparison policy")
     if mode == "behavior":
@@ -312,13 +312,16 @@ def choose_action(
         return 0
     safe, predicted = twin.eligible(
         state, t, risk_mode=(
-            "cvar" if mode in ("distributional_cvar", "twin_cql_cvar_hybrid")
+            "cvar" if mode in (
+                "twin_greedy_cvar_gate", "distributional_cvar",
+                "twin_cql_cvar_hybrid"
+            )
             else "upper"
         ),
     )
     if not safe.any():
         return -1  # external environment executes explicit hold-last
-    if mode == "twin_greedy":
+    if mode in ("twin_greedy", "twin_greedy_cvar_gate"):
         score = np.array([
             MultiSliceToyTwin.reward(predicted[a], a, previous)
             for a in range(N_ACTIONS)
