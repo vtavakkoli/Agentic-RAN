@@ -188,6 +188,34 @@ Possible verdicts are:
 
 ## Core platform capabilities
 
+### PULSE-RAN: priority-driven baseline in the action-dependent twin
+
+**PULSE-RAN** (*Priority-driven URLLC and Load-Sensitive Engine*) is the
+new name of our original queue-priority baseline. It first selects the
+URLLC-favoring allocation when the URLLC queue exceeds 0.45, otherwise
+an eMBB-favoring allocation when the eMBB queue exceeds 1.0, and
+otherwise the balanced configuration. No thresholds or outcomes were
+changed by the rename.
+
+Compare PULSE-RAN to the existing Twin-CQL, distributional-CVaR,
+CQL/CVaR hybrid and greedy policies using identical *simulated*
+action-dependent episode seeds:
+
+~~~bash
+python -m agentic_ran.research_twin_study --seed 2028 --train-episodes 160 --validation-episodes 40 --test-episodes 60 --steps 24 --output results/pulse_ran_comparison.json
+python -m agentic_ran.research_pulse_report --input results/pulse_ran_comparison.json
+~~~
+
+The JSON includes episode-paired comparisons to PULSE-RAN, validation
+ranking across all controllers and realized per-slice SLA/utility
+metrics; the neighboring `pulse_ran_comparison_episodes.csv` contains
+per-episode observations. A separate `pulse_ran_gated` diagnostic
+applies the learned twin's action-support and queue-risk restrictions
+and is **not** the original method. The unshielded PULSE-RAN is not
+necessarily deployment-safe; these tests are in a **constructed toy
+simulator**, not live 5G/O-RAN evidence. See
+[experimental methods](docs/TWIN_CQL_CVAR_RESULTS_2026.md).
+
 ### Planning and digital twin
 
 - configurable multi-step counterfactual rollouts;

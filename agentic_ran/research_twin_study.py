@@ -24,7 +24,10 @@ from agentic_ran.research_twin_offline import (
     choose_action, fit_calibrated_twin, fit_linear_cql, fit_quantile_td,
 )
 
-MODELS = ("heuristic", "twin_greedy", "twin_greedy_cvar_gate", "twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid")
+MODELS = (
+    "pulse_ran", "pulse_ran_gated", "twin_greedy", "twin_greedy_cvar_gate",
+    "twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid",
+)
 RISK_REGRESSION_TOLERANCE = 0.015
 MIN_VALIDATION_UTILITY_GAIN = 0.003
 
@@ -163,13 +166,14 @@ def run_twin_study(
             "twin_cql", "twin_cql_cvar_hybrid"
         ) else None
         return lambda state, previous, t: choose_action(
-            "behavior" if mode == "heuristic" else mode,
+            mode,
             state, previous, t, twin=twin, cql=model, quantile=quantile,
             risk_weight=risk_weight, blend_weight=blend_weight,
         )
 
     candidates = {
-        "heuristic": [{"description": "heuristic"}],
+        "pulse_ran": [{"description": "PULSE-RAN priority rule (original unshielded baseline)"}],
+        "pulse_ran_gated": [{"description": "PULSE-RAN with shared action-support/queue-risk gate"}],
         "twin_greedy": [{"description": "one_step_greedy"}],
         "twin_greedy_cvar_gate": [
             {"description": "one_step_greedy_with_cvar_queue_risk_mask"}
@@ -270,6 +274,7 @@ def run_twin_study(
     row_outputs = []
     comparisons = {}
     matched_gate_comparisons = {}
+    pulse_comparisons = {}
     score_tables = {}
     for split, test_seed, scenarios in (
         ("seen", seed + 30000000, ("normal", "congested", "bursty")),
@@ -325,6 +330,17 @@ def run_twin_study(
         _holm_adjust(comparisons[split])
         _holm_adjust(same_gate)
         matched_gate_comparisons[split] = same_gate
+        # PULSE-RAN is compared on the SAME realized episode seeds,
+        # not merely against mean outcomes from different trajectories.
+        # Negative differences below mean PULSE-RAN has higher reward.
+        pulse_comparisons[split] = {
+            mode: _paired_inference(
+                test[mode], test["pulse_ran"],
+                seed=seed + 600000 + 100 * int(split == "unseen") + j,
+            )
+            for j, mode in enumerate(MODELS) if mode != "pulse_ran"
+        }
+        _holm_adjust(pulse_comparisons[split])
     rigorous = {}
     for family in ("twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid"):
         seen = comparisons["seen"][family]
@@ -349,6 +365,16 @@ def run_twin_study(
         )
     summary = {
         "experiment": "three_slice_action_dependent_toy_digital_twin",
+        "named_priority_controller": {
+            "id": "pulse_ran",
+            "display_name": "PULSE-RAN",
+            "expansion": "Priority-driven URLLC and Load-Sensitive Engine",
+            "method_unchanged": True,
+            "original_heuristic_alias": "heuristic",
+            "gated_diagnostic_id": "pulse_ran_gated",
+            "gated_diagnostic_is_original_policy": False,
+            "original_baseline_uses_common_learned_support_gate": False,
+        },
         "scientific_scope": (
             "Controlled simulated interventions only; not COMMAG, ns-3, "
             "Colosseum, or measured real RAN outcomes."
@@ -386,9 +412,20 @@ def run_twin_study(
         },
         "validation_grid": val_grid,
         "frozen_validation_choices": validation_flags,
+        "validation_ranked_all": sorted(
+            validation_flags,
+            key=lambda mode: validation_flags[mode]["validation_metrics"]["return"],
+            reverse=True,
+        ),
         "validation_selected_family": selected_family,
         "validation_selection_used_final_test": False,
         "final_test_metrics": score_tables,
+        "final_test_ranked_by_utility": {
+            split: sorted(score_tables[split], key=lambda mode: score_tables[split][mode]["return"], reverse=True)
+            for split in ("seen", "unseen")
+        },
+        "paired_vs_pulse_ran": pulse_comparisons,
+        "pulse_comparison_direction": "challenger_minus_pulse_ran; negative favors PULSE-RAN",
         "paired_vs_original_twin_greedy": comparisons,
         "paired_vs_same_risk_gate_greedy": matched_gate_comparisons,
         "superiority_checks": rigorous,
@@ -399,6 +436,8 @@ def run_twin_study(
             "Hold fallback is physically simulated, including any adverse consequences, not declared safe.",
             "Multiple controller comparisons require independently replicated validation.",
             "The original static COMMAG dataset cannot independently identify control effects.",
+            "PULSE-RAN (original heuristic) is unshielded; its separate gated diagnostic may have different actions and realized outcomes.",
+            "The legacy learned-family selector excludes PULSE-RAN by design; validation_ranked_all includes the named baseline but is not a deployable model promotion policy.",
             "CVaR has a stricter tail-risk gate, so comparisons with both the original and a same-gate greedy baseline are provided.",
             "Holm adjustment covers three contenders within each split; split families remain exploratory.",
         ],
@@ -429,6 +468,8 @@ def main() -> None:
         "output": str(args.output), "episode_csv": str(episode_path),
         "selected_family": summary["validation_selected_family"],
         "test_metrics": summary["final_test_metrics"],
+        "rankings": summary["final_test_ranked_by_utility"],
+        "paired_vs_pulse_ran": summary["paired_vs_pulse_ran"],
         "superiority_checks": summary["superiority_checks"],
         "disclaimer": summary["scientific_scope"],
     }, indent=2, allow_nan=False))

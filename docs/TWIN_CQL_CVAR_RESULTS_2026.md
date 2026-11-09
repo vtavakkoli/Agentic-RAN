@@ -14,7 +14,8 @@ publication benchmark has not changed.
   **CVaR** selector and stricter queue-tail risk gate; compared to greedy
   both with and without that same gate
 - A weighted CQL/CVaR hybrid, with the same CVaR queue-tail risk gate
-- A simple heuristic policy reference, distinct from the stochastic
+- **PULSE-RAN** (Priority-driven URLLC and Load-Sensitive Engine), the
+  original queue-priority policy, distinct from the stochastic
   logging behavior and not restricted by the research action-support gate
 
 The simulator actually executes the chosen PRB fractions and records the
@@ -29,7 +30,7 @@ Selected family: greedy twin. Higher return is better.
 
 | Controller | Seen mean return | Shifted unseen mean return |
 | --- | ---: | ---: |
-| Heuristic | 0.96452 | 0.76701 |
+| PULSE-RAN | 0.96452 | 0.76701 |
 | Greedy twin | 0.96356 | 0.55401 |
 | Twin-CQL | 0.92915 | 0.50731 |
 | Distributional CVaR | 0.88479 | 0.46811 |
@@ -50,7 +51,7 @@ weight=0.35 were chosen on validation only. Validation selected Twin-CQL.
 
 | Controller | Seen return | Unseen weak-channel return | Unseen eMBB SLA violations | Unseen URLLC SLA violations |
 | --- | ---: | ---: | ---: | ---: |
-| Heuristic | 0.97365 | 0.02591 | 31.60% | 0% |
+| PULSE-RAN | 0.97365 | 0.02591 | 31.60% | 0% |
 | Greedy twin | 0.96450 | -1.34109 | 47.78% | 26.81% |
 | Twin-CQL | **0.97385** | **-0.86599** | **40.49%** | 27.50% |
 | Distributional CVaR | 0.95476 | -1.28206 | 55.42% | 28.26% |
@@ -66,7 +67,7 @@ Twin-CQL versus matched greedy twin (60 independent test episodes per split):
 Both pairwise CQL improvements are statistically resolved for this toy
 experiment under the stated per-split tests; they are **not** universal
 superiority. Episode-level win rates were 26.7% seen and 58.3% unseen:
-the mean gains are not uniform across episodes. The unseen heuristic is much stronger than all learned
+the mean gains are not uniform across episodes. The unseen PULSE-RAN is much stronger than all learned
 controllers, and CQL's unseen URLLC violation rate is **27.5%**, which
 would not be suitable for reliability-critical deployment. The modest
 URLLC increase over greedy was within an exploratory 1.5 percentage-point
@@ -79,6 +80,33 @@ as superior on the basis of these experiments.
 Reproducible workflow and replication artifacts:
 
 https://github.com/vtavakkoli/Agentic-RAN/actions/runs/42581181720
+
+## PULSE-RAN naming and new comparison protocol
+
+The previously reported `heuristic` controller is now **PULSE-RAN**,
+**Priority-driven URLLC and Load-Sensitive Engine**. Its queue thresholds
+and priority order are unchanged: first URLLC queue above 0.45, then
+eMBB queue above 1.0, otherwise balanced PRB allocation. This is
+a naming change, not a newly trained model or adjusted result.
+
+From the newly generated studies onward, the controller is written
+as `pulse_ran` in the JSON and per-episode CSV. `pulse_ran_gated`
+is a **separate** diagnostic that applies the same learned-twin
+action-support and queue-risk gate as Twin-CQL; when its preferred
+action fails, the simulator executes an observed hold-last outcome.
+The unshielded PULSE-RAN remains distinct, so direct comparisons
+must disclose its different eligibility policy.
+
+The updated experiment adds paired episode-level CIs and Holm-adjusted
+tests **against PULSE-RAN** for every challenger, plus a separate
+`validation_ranked_all` that includes PULSE-RAN.
+The previous learned-family validation selector is unchanged and
+does *not* automatically promote PULSE-RAN; its selection should not
+be interpreted as proof of global superiority. Older artifacts
+with the label `heuristic` remain historically valid.
+
+Use `python -m agentic_ran.research_pulse_report --input <results.json>`
+to inspect the new ranked comparison table.
 
 ## What these experiments establish—and do not
 

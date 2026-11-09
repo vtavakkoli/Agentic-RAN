@@ -12,6 +12,8 @@ from agentic_ran.research_twin_offline import (
     choose_action, fit_calibrated_twin, fit_linear_cql, fit_quantile_td,
 )
 from agentic_ran.research_twin_study import run_twin_study, _paired_inference
+from agentic_ran.research_pulse_ran import NAME, EXPANSION, select_pulse_ran
+from agentic_ran.research_pulse_report import format_report
 
 
 def test_actions_are_valid_allocation_vectors():
@@ -118,16 +120,82 @@ def test_small_end_to_end_study_has_frozen_selection_and_no_commag_claim():
     assert summary["validation_selected_family"] in (
         "twin_greedy", "twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid",
     )
-    assert len(table) == 2 * 6 * 6
+    assert len(table) == 2 * 6 * 7
     assert set(table["split"]) == {"seen", "unseen"}
     assert set(table["policy"]) == {
-        "heuristic", "twin_greedy", "twin_greedy_cvar_gate",
+        "pulse_ran", "pulse_ran_gated", "twin_greedy", "twin_greedy_cvar_gate",
         "twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid",
     }
+    assert summary["named_priority_controller"]["display_name"] == "PULSE-RAN"
+    assert summary["named_priority_controller"]["method_unchanged"]
+    assert set(summary["validation_ranked_all"]) == set(table["policy"])
     for split in ("seen", "unseen"):
+        assert set(summary["paired_vs_pulse_ran"][split]) == (
+            set(table["policy"]) - {"pulse_ran"}
+        )
+        assert set(summary["final_test_ranked_by_utility"][split]) == set(table["policy"])
         assert len(summary["paired_vs_original_twin_greedy"][split]) == 3
         assert len(summary["paired_vs_same_risk_gate_greedy"][split]) == 3
         for name, outcome in summary["final_test_metrics"][split].items():
             assert np.isfinite(outcome["return"])
             assert 0 <= outcome["sla_URLLC"] <= 1
             assert 0 <= outcome["abstention_rate"] <= 1
+
+
+def test_pulse_ran_retains_original_queue_priority_and_strict_thresholds():
+    assert NAME == "PULSE-RAN"
+    assert "Priority-driven URLLC" in EXPANSION
+    state = np.zeros(9)
+    assert select_pulse_ran(state) == 0
+    state[0] = 1.0
+    state[2] = 0.45
+    assert select_pulse_ran(state) == 0
+    state[0] = 1.01
+    assert select_pulse_ran(state) == 2
+    state[2] = 0.451
+    assert select_pulse_ran(state) == 1  # URLLC always wins priority
+    with pytest.raises(ValueError, match="finite 9-feature"):
+        select_pulse_ran(np.zeros(8))
+    with pytest.raises(ValueError, match="finite 9-feature"):
+        select_pulse_ran(np.full(9, float("nan")))
+
+
+def test_legacy_behavior_alias_matches_pulse_and_gated_diagnostic_is_distinct():
+    logged = generate_logged_transitions(seed=18, episodes=18, steps=10)
+    twin = fit_calibrated_twin(logged)
+    state = np.zeros(9)
+    state[:3] = [100.0, 0, 100.0]
+    assert select_pulse_ran(state) == 1
+    for mode in ("behavior", "heuristic", "pulse_ran"):
+        assert choose_action(mode, state, 0, 0, twin=twin) == 1
+    assert choose_action("pulse_ran_gated", state, 0, 0, twin=twin) == -1
+
+
+def test_pulse_pairwise_has_zero_only_when_compared_to_identical_trajectory():
+    summary, table = run_twin_study(
+        seed=82, train_episodes=18, validation_episodes=6,
+        test_episodes=6, steps=6,
+    )
+    for split in ("seen", "unseen"):
+        pairs = summary["paired_vs_pulse_ran"][split]
+        assert all(
+            len(result["ci95"]) == 2
+            for result in pairs.values()
+        )
+        for name, result in pairs.items():
+            assert 0 <= result["holm_adjusted_p"] <= 1
+            assert result["n_independent_episodes"] == 6
+
+
+def test_pulse_report_prints_ranked_results_and_comparison_intervals():
+    summary, _ = run_twin_study(
+        seed=93, train_episodes=18, validation_episodes=6,
+        test_episodes=6, steps=6,
+    )
+    rendered = format_report(summary)
+    assert "PULSE-RAN | Priority-driven URLLC" in rendered
+    assert "PULSE-RAN Gated" in rendered
+    assert "Twin-CQL" in rendered
+    assert "challenger minus PULSE-RAN" in rendered
+    assert "SIMULATED INTERVENTIONS ONLY" in rendered
+    assert "SEEN" in rendered and "UNSEEN" in rendered
