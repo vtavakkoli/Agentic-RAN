@@ -543,6 +543,7 @@ def run_crossfit_benchmark(
                 "selection_reason": trial_joint["selection_reason"],
                 "selection_uses_final_test": False,
                 "train_only_budget": trial_joint["budget"],
+                "validation_model_headroom": trial_joint["validation_headroom"],
                 "alignment": trial_joint["alignment"],
                 "paired_clusters": trial_joint["paired_clusters"],
                 "minimum_validation_gain": trial_joint["minimum_validation_gain"],
