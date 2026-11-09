@@ -21,6 +21,7 @@ from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from agentic_ran.research_twin_environment import (
     ACTIONS, SLA_QUEUE_LIMITS, TwinTransitionBatch, MultiSliceToyTwin,
 )
+from agentic_ran.research_pulse_ran import select_pulse_ran
 
 N_ACTIONS = len(ACTIONS)
 GAMMA = 0.93
@@ -303,18 +304,20 @@ def choose_action(
     quantile: QuantileCVaRController | None = None,
     risk_weight: float = .3, blend_weight: float = .5,
 ) -> int:
-    """Shared action support/one-step queue risk, no hidden unsafe fallback."""
+    """Choose an action; learned controllers use twin support and risk gates.
+
+    PULSE-RAN is the original unshielded priority rule, and its optional
+    gated control is a separate diagnostic. The legacy 'behavior' and
+    'heuristic' names remain accepted for backward compatibility.
+    """
     if mode not in {
-        "behavior", "twin_greedy", "twin_greedy_cvar_gate", 
+        "pulse_ran", "pulse_ran_gated", "behavior", "heuristic",
+        "twin_greedy", "twin_greedy_cvar_gate",
         "twin_cql", "distributional_cvar", "twin_cql_cvar_hybrid",
     }:
         raise ValueError("unknown comparison policy")
-    if mode == "behavior":
-        if state[2] > .45:
-            return 1
-        if state[0] > 1:
-            return 2
-        return 0
+    if mode in {"pulse_ran", "behavior", "heuristic"}:
+        return select_pulse_ran(state)
     safe, predicted = twin.eligible(
         state, t, risk_mode=(
             "cvar" if mode in (
@@ -324,6 +327,13 @@ def choose_action(
             else "upper"
         ),
     )
+    if mode == "pulse_ran_gated":
+        # Exactly the same action-specific upper queue and support mask.
+        # If PULSE's requested action is unsupported, return an explicit
+        # abstention: the simulator then executes and measures hold-last.
+        # This does NOT certify that hold-last is safe.
+        requested = select_pulse_ran(state)
+        return requested if safe[requested] else -1
     if not safe.any():
         return -1  # external environment executes explicit hold-last
     if mode in ("twin_greedy", "twin_greedy_cvar_gate"):
@@ -348,7 +358,7 @@ def choose_action(
             (1 - blend_weight) * cql.predict(state, previous, t)
             + blend_weight * quantile.scores(state, previous, t, risk_weight)
         )
-    # Identical switching disutility for every non-behavior policy.
+    # Identical switching disutility for each learned, gated ranking policy.
     score = score - .055 * (np.arange(N_ACTIONS) != previous)
     score = np.where(safe, score, -np.inf)
     return int(np.argmax(score))
