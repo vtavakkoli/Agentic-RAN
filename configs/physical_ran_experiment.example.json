@@ -1,0 +1,10 @@
+{
+  "_warning": "EXAMPLE ONLY. You must install and implement the JSON-lines bridge for an actual ns-3/5G-LENA or Colosseum testbed. This file does not start either by itself.",
+  "cell": {"cell_id": "bs1", "bandwidth_mhz": 20, "scs_khz": 30, "reserved_prbs": 3},
+  "bridge_command": ["python", "path/to/your_real_ns3_bridge.py"],
+  "scenarios": ["normal", "congested", "weak_channel"],
+  "steps": 24,
+  "train_seeds": [201,202,203,204,205,206,207,208,209,210,211,212],
+  "validation_seeds": [301,302,303,304],
+  "test_seeds": [401,402,403,404]
+}
