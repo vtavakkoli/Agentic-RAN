@@ -1,0 +1,11 @@
+{
+  "_warning": "EXAMPLE ONLY. Do not assert COMMAG physical feasibility until verified against actual gNB/DU configuration and data semantics.",
+  "confirmed_commag_prb_units": false,
+  "per_slice_schedulers_supported": false,
+  "cells": {
+    "bs1": {"cell_id": "bs1", "bandwidth_mhz": 20, "scs_khz": 30, "reserved_prbs": 3},
+    "bs2": {"cell_id": "bs2", "bandwidth_mhz": 20, "scs_khz": 30, "reserved_prbs": 3},
+    "bs3": {"cell_id": "bs3", "bandwidth_mhz": 20, "scs_khz": 30, "reserved_prbs": 3},
+    "bs4": {"cell_id": "bs4", "bandwidth_mhz": 20, "scs_khz": 30, "reserved_prbs": 3}
+  }
+}
