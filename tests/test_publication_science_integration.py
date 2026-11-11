@@ -145,6 +145,25 @@ def test_crossfit_publication_pipeline_runs_end_to_end_on_synthetic_data(
     monkeypatch.setenv("AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_ADAPTIVE_HYBRID", "1")
     monkeypatch.setenv("AGENTIC_RAN_EVAL_JOINT_SLICE_ADVANTAGE", "1")
+    # An explicit, test-only PHY manifest replaces the historical
+    # data-derived 14-PRB proxy; these are synthetic unit-test values.
+    import json
+    manifest = tmp_path / "test-only-physical-bwp.json"
+    manifest.write_text(json.dumps({
+        "schema": "jagc-phy-bwp-v1",
+        "cells": {
+            "bs1": {
+                "backend": "ns3-5glena",
+                "carrier_id": "synthetic-test-carrier",
+                "bwp_id": "test-BWP",
+                "total_prbs": 52,
+                "reserved_prbs": 4,
+                "numerology": 1,
+                "source": "nr_phy_observed",
+            }
+        }
+    }))
+    monkeypatch.setenv("AGENTIC_RAN_JAGC_BWP_MANIFEST", str(manifest))
     data = tmp_path / "synthetic.csv.gz"
     output = tmp_path / "publication"
     _synthetic_publication_frame().to_csv(data, index=False, compression="gzip")
