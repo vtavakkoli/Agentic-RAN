@@ -188,6 +188,16 @@ Possible verdicts are:
 
 ## Core platform capabilities
 
+### Physical NR resource constraints and action-dependent RAN trials
+
+The experimental [physical JAGC workflow](docs/PHYSICAL_CLOSED_LOOP_JAGC.md)
+adds explicit 3GPP NRB cell capacity checks, a fail-closed JSON-lines
+external ns-3/5G-LENA or Colosseum simulator/testbed protocol, and
+conservative advantage learning from **actually executed randomized**
+actions. It requires verified testbed PRB semantics and a faithful
+frozen original-Agentic-RAN adapter. No external testbed runs, 10% gain,
+or real-world safety claims are included in the repository CI.
+
 ### Agentic-RAN v3: Joint-Slice Advantage-Gated Control (research)
 
 Enable the optional JAGC model for **actual prepared COMMAG recordings**
