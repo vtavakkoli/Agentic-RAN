@@ -188,6 +188,23 @@ Possible verdicts are:
 
 ## Core platform capabilities
 
+### Experimental action-dependent JAGC and physical BWP budgets
+
+The original 14-PRB historical allocation proxy is no longer used as
+a physical cell budget. The opt-in offline JAGC now requires an
+NR-PHY-derived per-base-station carrier/BWP capacity manifest and
+fails closed if it is missing. See
+[physical BWP and action-dependent protocol](docs/PHYSICAL_CLOSED_LOOP_RESEARCH.md).
+
+A separate closed-loop research runner uses a persistent external
+ns-3/5G-LENA or Colosseum process, **executed randomized interventions**,
+a frozen original Agentic-RAN comparator, and validation-only
+supported-advantage learning. It explicitly projects the frozen
+baseline's per-slice allocations onto the shared physical capacity.
+The bundled ns-3 event-queue example is a **simplified discrete-event
+demonstrator**, not 5G-LENA 5G NR PHY evidence or a Colosseum run.
+The 10% target remains unproven.
+
 ### Agentic-RAN v3: Joint-Slice Advantage-Gated Control (research)
 
 Enable the optional JAGC model for **actual prepared COMMAG recordings**
