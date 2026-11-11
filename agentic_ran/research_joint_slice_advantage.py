@@ -15,7 +15,9 @@ realized network-control gains. No action-dependent dynamics are identified.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
+import json
+import os
+from pathlib import Path
 import re
 from typing import Any
 
@@ -23,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from agentic_ran.offline_policy import STATE_COLUMNS
+from agentic_ran.research_physical_prb import CellBudget
 from agentic_ran.publication_science import (
     _choose_from_precomputed, _policy_precompute,
 )
@@ -139,40 +142,59 @@ def aligned_joint_frame(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, An
     }
 
 
-def training_prb_budgets(
-    policy_fit: pd.DataFrame, *, quantile: float = .90,
+def physical_prb_budgets(
+    policy_fit: pd.DataFrame, *, manifest_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Derive a PRB-budget *proxy* exclusively from the policy-fit role."""
-    if not 0.5 <= quantile <= 1.0:
-        raise ValueError("budget quantile must be between 0.5 and 1")
-    keys = [
-        name for name in GROUP_KEYS
-        if name in policy_fit.columns and name != "publication_split"
-    ]
-    needed = [*keys, "slice_type", "slice_prb"]
-    missing = sorted(set(needed) - set(policy_fit))
-    if missing:
-        raise ValueError(f"missing training budget inputs: {missing}")
-    per_slice = policy_fit.groupby(
-        [*keys, "slice_type"], observed=True, dropna=False,
-    )["slice_prb"].mean().unstack("slice_type")
-    complete = per_slice.reindex(columns=list(SLICES)).dropna()
-    if complete.empty:
-        raise ValueError("no complete training-only budget observations")
-    totals = complete.sum(axis=1)
-    if not np.isfinite(totals).all() or (totals <= 0).any():
-        raise ValueError("nonpositive or nonfinite training allocation budget")
-    base_stations = complete.index.get_level_values("base_station").astype(str)
+    """Get a physically meaningful BWP PRB count from external NR-PHY evidence.
+
+    Historical COMMAG slice_prb allocations never establish the shared
+    physical resource capacity. The experiment FAILS CLOSED without an
+    explicit carrier/BWP capacity manifest; no 14-PRB quantile fallback.
+    A manifest is a source assertion requiring independent verification.
+    """
+    source = manifest_path or os.environ.get("AGENTIC_RAN_JAGC_BWP_MANIFEST")
+    if not source:
+        raise RuntimeError(
+            "JAGC requires AGENTIC_RAN_JAGC_BWP_MANIFEST with per-base-station "
+            "NR-PHY-derived physical BWP capacity. Historical 14-PRB proxy is "
+            "not a physical constraint; no fallback permitted."
+        )
+    with Path(source).open(encoding="utf-8") as stream:
+        manifest = json.load(stream)
+    if manifest.get("schema") != "jagc-phy-bwp-v1":
+        raise ValueError("unsupported physical BWP capacity manifest schema")
+    cells = manifest.get("cells")
+    if not isinstance(cells, dict) or not cells:
+        raise ValueError("no BWP capacities in manifest")
+    required = set(policy_fit["base_station"].astype(str))
+    if not required.issubset(cells):
+        raise ValueError(f"BWP manifest missing base stations: {sorted(required - set(cells))}")
     budget_by_bs = {}
-    for bs in sorted(set(base_stations)):
-        local = totals[base_stations == bs]
-        budget_by_bs[bs] = int(max(1, math.ceil(float(local.quantile(quantile)))))
+    provenance = {}
+    for bs in sorted(required):
+        raw = cells[bs]
+        backend = str(raw.get("backend", ""))
+        b = CellBudget.from_handshake(raw, backend)
+        if b.source != "nr_phy_observed" or backend not in ("ns3-5glena", "colosseum"):
+            raise ValueError(
+                f"{bs}: physical capacity must be reported by the actual "
+                "5G-LENA/Colosseum NR PHY (not configured_demo or COMMAG)"
+            )
+        budget_by_bs[bs] = b.usable_prbs
+        provenance[bs] = b.to_dict()
     return {
         "budget_by_base_station": budget_by_bs,
-        "global_budget": int(max(1, math.ceil(float(totals.quantile(quantile))))),
-        "quantile": float(quantile),
-        "training_groups": int(len(complete)),
-        "budget_units": "recorded_slice_prb_sum_proxy_not_verified_physical_gNB_capacity",
+        "global_budget": min(budget_by_bs.values()),
+        "quantile": None,
+        "training_groups": int(policy_fit.groupby(
+            ["scenario", "training_config", "experiment", "base_station", "timestamp_s"],
+            observed=True,
+        ).ngroups),
+        "budget_units": "integer_PRBs_in_reported_single_carrier_BWP",
+        "source": "NR_Phy_BWP_capacity_manifest_not_historical_action_quantile",
+        "cells": provenance,
+        "manifest": str(source),
+        "physical_capacities_are_externally_asserted_not_cryptographically_verified": True,
     }
 
 
@@ -564,7 +586,7 @@ def run_joint_slice_fold(
     minimum_validation_gain: float = .002,
 ) -> dict[str, Any]:
     """Select from predefined profiles on validation; freeze before final test."""
-    budgets = training_prb_budgets(policy_fit)
+    budgets = physical_prb_budgets(policy_fit)
     val = prepare_joint_inputs(
         bundle, evaluator, validation, calibrated, switch_margin, budgets,
     )
