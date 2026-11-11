@@ -139,3 +139,42 @@ def allocate_shares(
     result = SliceAllocation(tuple(int(a + b) for a, b in zip(base, minimums, strict=True)), scheduler)
     result.validate(cell, minimums=minimums)
     return result
+
+
+def commag_physical_budget_config(path: str) -> dict[str, object]:
+    """Load validated physical capacities for COMMAG BS IDs.
+
+    Crucially, this is *not* obtained by taking quantiles of the observed
+    allocations. A domain expert must confirm that COMMAG slice_prb and the
+    :prb=<N> action tokens denote physical PRBs at this configured cell.
+    Otherwise refuse to certify an offline physical PRB comparison.
+    """
+    import json
+    from pathlib import Path
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if raw.get("confirmed_commag_prb_units") is not True:
+        raise ValueError(
+            "must explicitly confirm dataset action PRB unit equivalence "
+            "before replacing the offline budget proxy"
+        )
+    cells = raw.get("cells")
+    if not isinstance(cells, dict) or not cells:
+        raise ValueError("physical COMMAG config requires mapped base-station cells")
+    budgets = {}
+    for bs, spec in cells.items():
+        if not isinstance(spec, dict):
+            raise ValueError("invalid cell config")
+        cell = NRCellCapacity.from_config(spec)
+        if cell.cell_id != bs:
+            raise ValueError("BS mapping must equal physical cell ID")
+        budgets[str(bs)] = cell.available_prbs
+    return {
+        "budget_by_base_station": budgets,
+        "global_budget": 0,  # never silently substitute capacity for unmapped base station
+        "quantile": None,
+        "training_groups": 0,
+        "budget_units": "explicit_NR_FR1_physical_PRBs_confirmed_by_operator",
+        "physical_capacity_confirmed": True,
+        "shared_scheduler_required": raw.get("per_slice_schedulers_supported") is not True,
+        "source_config": path,
+    }
