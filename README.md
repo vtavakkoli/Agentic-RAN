@@ -111,6 +111,8 @@ The discrete action combines scheduler and PRB allocation, for example `proporti
 
 PPO is deliberately not retrained from fixed CSV logs: PPO is on-policy and requires an interactive environment. The original COMMAG PPO artifacts remain upstream; Agentic-RAN uses Fitted-Q because it is an appropriate offline baseline. See `docs/COMMAG.md` for the protocol and limitations.
 
+**Experimental PPO + weight-space editing:** For an *interactive, action-dependent toy* three-slice benchmark, use the optional `.[ppo]` dependency and `python -m agentic_ran.research_ppo_wsp`. It trains clipped PPO, then tests validation-selected sparse edits of its actor output weights against frozen PPO, random edits and PULSE-RAN on paired, untouched test seeds. Read [method and limitations](docs/PPO_WEIGHT_SPACE.md). This is not physical NR validation; superiority is not assumed.
+
 ### What `prepare-data` does
 
 The source catalog is `configs/data_sources.yaml`. The default profile downloads public 5G measurement datasets from their original Zenodo records, verifies the published MD5 checksum, normalizes heterogeneous Excel tables and writes compressed outputs:

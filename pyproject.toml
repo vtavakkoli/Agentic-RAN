@@ -33,6 +33,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# PPO and weight-space programming are opt-in (PyTorch is not needed for CI).
+ppo = [
+  "torch>=2.6,<3",
+]
 oran = [
   "websocket-client>=1.8,<2",
 ]
