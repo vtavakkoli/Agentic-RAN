@@ -203,6 +203,7 @@ def exact_multiple_choice_knapsack(
     eligible: np.ndarray,
     prb_cost: np.ndarray,
     budget: int,
+    *, scheduler_names: tuple[str, ...] | None = None,
 ) -> tuple[np.ndarray | None, float]:
     """Select exactly one eligible action per slice with an integer PRB budget.
 
@@ -217,6 +218,19 @@ def exact_multiple_choice_knapsack(
         raise ValueError("expected three slice rows with matched action matrices")
     if costs.shape != (score.shape[1],) or np.any(costs < 0) or budget < 0:
         raise ValueError("invalid PRB costs or budget")
+    if scheduler_names is not None:
+        if len(scheduler_names) != score.shape[1]:
+            raise ValueError("scheduler identities must match the action set")
+        best_choice: np.ndarray | None = None
+        best_score = float("-inf")
+        for scheduler in sorted(set(scheduler_names)):
+            group_mask = np.asarray([name == scheduler for name in scheduler_names], dtype=bool)
+            choice, value = exact_multiple_choice_knapsack(
+                score, allowed & group_mask[None, :], costs, budget,
+            )
+            if choice is not None and value > best_score:
+                best_choice, best_score = choice, value
+        return best_choice, best_score
     states: dict[int, tuple[float, tuple[int, ...]]] = {0: (0.0, ())}
     for slice_index in range(3):
         best_per_cost: dict[int, tuple[float, int]] = {}
@@ -266,6 +280,7 @@ class JointInputs:
     actions: list[str]
     prb_costs: np.ndarray
     budgets: np.ndarray
+    shared_scheduler_required: bool = False
 
 
 def prepare_joint_inputs(
@@ -361,9 +376,17 @@ def prepare_joint_inputs(
         eligible_parts.append(allowed)
         ref_parts.append(reference_idx)
         incumbent_parts.append(current)
-    budgets = rep.iloc[::3]["base_station"].astype(str).map(
+    mapped = rep.iloc[::3]["base_station"].astype(str).map(
         budget_model["budget_by_base_station"]
-    ).fillna(budget_model["global_budget"]).to_numpy(dtype=int)
+    )
+    if budget_model.get("physical_capacity_confirmed"):
+        if mapped.isna().any():
+            raise ValueError(
+                "unmapped base station: cannot infer a physical NRB capacity"
+            )
+        budgets = mapped.to_numpy(dtype=int)
+    else:
+        budgets = mapped.fillna(budget_model["global_budget"]).to_numpy(dtype=int)
     return JointInputs(
         rep, alignment,
         np.concatenate(score_parts, axis=0).reshape(-1, 3, na),
@@ -375,6 +398,7 @@ def prepare_joint_inputs(
         np.concatenate(dm_sla_parts, axis=0).reshape(-1, 3, na),
         np.concatenate(eval_support_parts, axis=0).reshape(-1, 3, na),
         list(bundle.actions), costs, budgets,
+        bool(budget_model.get("shared_scheduler_required", False)),
     )
 
 
@@ -414,9 +438,14 @@ def evaluate_joint_profile(
             np.arange(len(prepared.actions))[None, :]
             != prepared.incumbent_idx[g, :, None]
         )
+        schedulers = (
+            tuple(str(action).split(":prb=", 1)[0] for action in prepared.actions)
+            if prepared.shared_scheduler_required else None
+        )
         chosen, best_obj = exact_multiple_choice_knapsack(
             per_action / 3.0, slice_eligible,
             prepared.prb_costs, int(prepared.budgets[g]),
+            scheduler_names=schedulers,
         )
         if chosen is None:
             no_feasible += 1
@@ -540,9 +569,14 @@ def validation_model_headroom(
     feasible = 0
     for g in range(len(reference)):
         eligible = prepared.eligible[g] & prepared.evaluator_supported[g]
+        schedulers = (
+            tuple(str(action).split(":prb=", 1)[0] for action in prepared.actions)
+            if prepared.shared_scheduler_required else None
+        )
         candidate, predicted = exact_multiple_choice_knapsack(
             prepared.evaluator_utility[g] / 3.0, eligible,
             prepared.prb_costs, int(prepared.budgets[g]),
+            scheduler_names=schedulers,
         )
         if candidate is None:
             continue
