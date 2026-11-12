@@ -1,6 +1,7 @@
 """Regression tests for Agentic-RAN v3 joint-slice advantage-gated research."""
 from __future__ import annotations
 
+import json
 import numpy as np
 import pandas as pd
 import pytest
@@ -9,7 +10,7 @@ from agentic_ran.offline_policy import STATE_COLUMNS
 from agentic_ran.research_joint_slice_advantage import (
     GROUP_KEYS, PROFILES, JointInputs, aligned_joint_frame,
     evaluate_joint_profile, exact_multiple_choice_knapsack,
-    paired_joint_clusters, parse_prb_costs, training_prb_budgets,
+    paired_joint_clusters, parse_prb_costs, physical_prb_budgets,
 )
 
 
@@ -66,20 +67,40 @@ def test_alignment_averages_real_ue_data_and_never_invents_missing_slice():
         aligned_joint_frame(frame[frame.slice_type == "eMBB"])
 
 
-def test_train_only_budget_is_derived_from_contemporaneous_allocations():
+def test_physical_budget_requires_real_phy_manifest_not_logged_actions(tmp_path):
     full = _frame()
     train = full[full.publication_split.eq("train")]
-    result = training_prb_budgets(train)
-    assert result["budget_by_base_station"]["bs1"] == 6
-    assert result["training_groups"] == 4
-    heldout_modified = full.copy()
-    heldout_modified.loc[heldout_modified.publication_split != "train", "slice_prb"] = 99
-    result2 = training_prb_budgets(
-        heldout_modified[heldout_modified.publication_split.eq("train")]
-    )
-    assert result == result2
-    with pytest.raises(ValueError, match="quantile"):
-        training_prb_budgets(train, quantile=.2)
+    with pytest.raises(RuntimeError, match="AGENTIC_RAN_JAGC_BWP_MANIFEST"):
+        physical_prb_budgets(train, manifest_path=None)
+    path = tmp_path / "bwp.json"
+    physical = {
+        "schema": "jagc-phy-bwp-v1",
+        "cells": {
+            "bs1": {
+                "backend": "ns3-5glena",
+                "carrier_id": "NR-carrier-0",
+                "bwp_id": "DL-BWP-0",
+                "total_prbs": 52,
+                "reserved_prbs": 4,
+                "numerology": 1,
+                "source": "nr_phy_observed",
+            },
+        },
+    }
+    path.write_text(json.dumps(physical))
+    budget = physical_prb_budgets(train, manifest_path=path)
+    assert budget["budget_by_base_station"]["bs1"] == 48
+    assert budget["global_budget"] == 48
+    assert budget["budget_units"] == "integer_PRBs_in_reported_single_carrier_BWP"
+    assert budget["training_groups"] == 4
+    # Changing logged PRB values must NOT change the external PHY capacity.
+    modified = train.copy()
+    modified["slice_prb"] = 99
+    assert physical_prb_budgets(modified, manifest_path=path)["global_budget"] == 48
+    physical["cells"]["bs1"]["source"] = "configured_ns3_demo"
+    path.write_text(json.dumps(physical))
+    with pytest.raises(ValueError, match="physical capacity"):
+        physical_prb_budgets(train, manifest_path=path)
 
 
 def test_knapsack_is_exact_under_shared_budget_and_fails_closed():

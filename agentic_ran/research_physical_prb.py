@@ -1,180 +1,137 @@
-"""Physical NR cell PRB capacity and explicit three-slice allocation actions.
-
-No capacities are inferred from historical COMMAG allocations. The user must
-provide a deployment-level numerology and carrier bandwidth (or explicit
-validated physical NRB). Table 5.3.2-1, TS 38.104, FR1. All values refer
-to *one cell, one carrier, one numerology and one scheduling interval*.
-"""
+"""Physical, BWP-scoped PRB accounting; never infer cell capacity from COMMAG labels."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Any
 
 SLICES = ("eMBB", "mMTC", "URLLC")
-
-# NR FR1 transmission bandwidth configuration (N_RB), TS 38.104 Table 5.3.2-1.
-# Explicitly reject unknown combinations rather than estimating.
-FR1_NRB = {
-    15: {5: 25, 10: 52, 15: 79, 20: 106, 25: 133, 30: 160, 40: 216, 50: 270},
-    30: {5: 11, 10: 24, 15: 38, 20: 51, 25: 65, 30: 78, 40: 106,
-         50: 133, 60: 162, 70: 189, 80: 217, 90: 245, 100: 273},
-    60: {10: 11, 15: 18, 20: 24, 25: 31, 30: 38, 40: 51, 50: 65,
-         60: 79, 70: 93, 80: 107, 90: 121, 100: 135},
-}
+SCHEDULERS = ("round_robin", "waterfilling", "proportional_fair")
 
 
 @dataclass(frozen=True)
-class NRCellCapacity:
-    cell_id: str
-    bandwidth_mhz: int
-    scs_khz: int
-    reserved_prbs: int = 0
-    max_scheduled_prbs: int | None = None
-
-    @property
-    def carrier_prbs(self) -> int:
-        value = FR1_NRB.get(self.scs_khz, {}).get(self.bandwidth_mhz)
-        if value is None:
-            raise ValueError("unsupported FR1 carrier bandwidth/SCS combination")
-        return value
-
-    @property
-    def available_prbs(self) -> int:
-        capacity = self.carrier_prbs
-        if not isinstance(self.reserved_prbs, int) or not 0 <= self.reserved_prbs < capacity:
-            raise ValueError("reserved_prbs must be a physical nonnegative count less than carrier NRBs")
-        free = capacity - self.reserved_prbs
-        if self.max_scheduled_prbs is not None:
-            if not isinstance(self.max_scheduled_prbs, int) or not 0 < self.max_scheduled_prbs <= capacity:
-                raise ValueError("max_scheduled_prbs must be within physical carrier capacity")
-            free = min(free, self.max_scheduled_prbs)
-        return free
+class CellBudget:
+    carrier_id: str
+    bwp_id: str
+    total_prbs: int
+    reserved_prbs: int
+    numerology: int
+    source: str
+    backend: str
 
     @classmethod
-    def from_config(cls, data: Mapping[str, object]) -> "NRCellCapacity":
-        required = {"cell_id", "bandwidth_mhz", "scs_khz"}
-        if not required.issubset(data):
-            raise ValueError(f"missing physical cell configuration {sorted(required - set(data))}")
-        obj = cls(
-            cell_id=str(data["cell_id"]),
-            bandwidth_mhz=int(data["bandwidth_mhz"]),
-            scs_khz=int(data["scs_khz"]),
-            reserved_prbs=int(data.get("reserved_prbs", 0)),
-            max_scheduled_prbs=(
-                int(data["max_scheduled_prbs"])
-                if data.get("max_scheduled_prbs") is not None else None
-            ),
-        )
-        if not obj.cell_id.strip():
-            raise ValueError("empty cell ID")
-        _ = obj.available_prbs
-        return obj
+    def from_handshake(cls, data: dict[str, Any], backend: str) -> "CellBudget":
+        if not isinstance(data, dict):
+            raise ValueError("simulator must report a physical BWP capacity object")
+        fields = ("carrier_id", "bwp_id", "total_prbs", "reserved_prbs", "numerology", "source")
+        missing = sorted(set(fields) - set(data))
+        if missing:
+            raise ValueError(f"missing BWP capacity fields: {missing}")
+        for key in ("total_prbs", "reserved_prbs", "numerology"):
+            if type(data[key]) is not int:
+                raise ValueError(f"{key} must be an integer physical unit")
+        budget = cls(*(data[key] for key in fields), backend=str(backend))
+        if not all((budget.carrier_id, budget.bwp_id, budget.source, budget.backend)):
+            raise ValueError("empty carrier/BWP/source/backend identifier")
+        if not (1 <= budget.total_prbs <= 275 and 0 <= budget.reserved_prbs < budget.total_prbs):
+            raise ValueError("invalid NR BWP PRB capacity/reservation")
+        if not 0 <= budget.numerology <= 5:
+            raise ValueError("invalid NR numerology")
+        if budget.source in ("COMMAG_trace", "historical_allocation_quantile", "unknown"):
+            raise ValueError("historical slice allocations cannot establish physical cell budget")
+        return budget
+
+    @property
+    def usable_prbs(self) -> int:
+        return self.total_prbs - self.reserved_prbs
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.__dict__, "usable_prbs": self.usable_prbs,
+                "backend_reports_phy_observed_capacity":
+                self.backend in ("ns3-5glena", "colosseum") and self.source == "nr_phy_observed"}
 
 
 @dataclass(frozen=True)
-class SliceAllocation:
-    """Exactly one scheduler and one physical PRB count for each slice.
-
-    A *single* common scheduler is used across slices unless a documented
-    adapter supports per-slice scheduler selection. The explicit action is
-    not a COMMAG logged-action token: no unsupported action reinterpretation.
-    """
+class JointAction:
     prbs: tuple[int, int, int]
-    scheduler: str = "proportional_fair"
+    schedulers: tuple[str, str, str] = ("proportional_fair",) * 3
 
-    def __post_init__(self) -> None:
-        if len(self.prbs) != 3 or any(type(x) is not int or x < 0 for x in self.prbs):
-            raise ValueError("allocation must have three nonnegative integer physical PRB counts")
-        if self.scheduler not in ("round_robin", "waterfilling", "proportional_fair"):
-            raise ValueError("unsupported scheduler name")
+    def validate(self, budget: CellBudget, minimum: tuple[int, int, int] = (1, 1, 1)) -> None:
+        if len(self.prbs) != 3 or len(self.schedulers) != 3:
+            raise ValueError("exactly three aligned slice actions required")
+        if any(type(x) is not int for x in self.prbs):
+            raise ValueError("PRB allocations must use integer PHY resource units")
+        if any(x < lo for x, lo in zip(self.prbs, minimum, strict=True)):
+            raise ValueError("slice is below physical PRB minimum")
+        if sum(self.prbs) > budget.usable_prbs:
+            raise ValueError("joint PRB allocation exceeds BWP available capacity")
+        if any(s not in SCHEDULERS for s in self.schedulers):
+            raise ValueError("unknown scheduler")
 
-    def validate(self, cell: NRCellCapacity, *, minimums: tuple[int, int, int] = (0, 0, 0)) -> None:
-        if len(minimums) != 3 or any(type(x) is not int or x < 0 for x in minimums):
-            raise ValueError("invalid slice minimums")
-        if any(x < bound for x, bound in zip(self.prbs, minimums, strict=True)):
-            raise ValueError("allocation violates per-slice minimum PRBs")
-        if sum(self.prbs) > cell.available_prbs:
-            raise ValueError(
-                f"PRB overallocation: {sum(self.prbs)} requested, {cell.available_prbs} available"
-            )
+    def to_wire(self, budget: CellBudget) -> dict[str, Any]:
+        self.validate(budget)
+        return {"carrier_id": budget.carrier_id, "bwp_id": budget.bwp_id,
+                "slices": {s: {"prbs": self.prbs[i], "scheduler": self.schedulers[i]}
+                           for i, s in enumerate(SLICES)}}
 
-    def to_wire(self, cell: NRCellCapacity) -> dict[str, object]:
-        self.validate(cell)
-        return {
-            "cell_id": cell.cell_id, "unit": "physical_NR_PRB_per_slot",
-            "scheduler": self.scheduler,
-            "slice_prbs": dict(zip(SLICES, self.prbs, strict=True)),
-            "total_prbs": sum(self.prbs),
-            "carrier_prbs": cell.carrier_prbs,
-            "available_prbs": cell.available_prbs,
-        }
+    @classmethod
+    def from_wire(cls, data: dict[str, Any]) -> "JointAction":
+        return cls(tuple(data["slices"][s]["prbs"] for s in SLICES),
+                   tuple(data["slices"][s]["scheduler"] for s in SLICES))
 
 
-def allocate_shares(
-    cell: NRCellCapacity,
-    shares: tuple[float, float, float],
-    *,
-    minimums: tuple[int, int, int] = (0, 0, 0),
-    scheduler: str = "proportional_fair",
-) -> SliceAllocation:
-    """Largest remainder method with deterministic ties and exact physical bound."""
-    if len(shares) != 3:
-        raise ValueError("need three slice shares")
-    import math
-    if any(not math.isfinite(float(x)) or x < 0 for x in shares):
-        raise ValueError("shares must be finite and nonnegative")
-    if not math.isclose(sum(shares), 1.0, abs_tol=1e-7):
-        raise ValueError("slice shares must sum to one")
-    if len(minimums) != 3 or any(type(x) is not int or x < 0 for x in minimums):
-        raise ValueError("invalid slice minimums")
-    remaining = cell.available_prbs - sum(minimums)
+def project_reference_action(
+    desired_prbs: tuple[int, int, int], budget: CellBudget,
+    schedulers: tuple[str, str, str] = ("proportional_fair",) * 3,
+    minimum: tuple[int, int, int] = (1, 1, 1),
+) -> tuple[JointAction, bool]:
+    """Exact nearest-squared-error projection; label as capacity-projected baseline."""
+    if len(desired_prbs) != 3 or any(type(x) is not int or x < 0 for x in desired_prbs):
+        raise ValueError("invalid legacy PRB requests")
+    if sum(minimum) > budget.usable_prbs:
+        raise ValueError("insufficient BWP capacity for minimum slice allocations")
+    states = {0: (0, ())}
+    for j in range(3):
+        new = {}
+        for used, (cost, prior) in states.items():
+            for n in range(minimum[j], budget.usable_prbs - used + 1):
+                key = used + n
+                item = (cost + (n - desired_prbs[j]) ** 2, prior + (n,))
+                if key not in new or item < new[key]:
+                    new[key] = item
+        states = new
+    _, (_, chosen) = min(states.items(), key=lambda x: (x[1][0], -x[0]))
+    action = JointAction(chosen, schedulers)
+    action.validate(budget, minimum)
+    return action, chosen != desired_prbs
+
+
+def discrete_joint_catalog(
+    budget: CellBudget, *, minimum: tuple[int, int, int] = (1, 1, 1),
+) -> list[JointAction]:
+    """Fixed candidate designs in actual integer PRBs, not historical proxy units."""
+    fractions = (
+        (.34, .33, .33), (.50, .20, .30), (.35, .20, .45),
+        (.60, .20, .20), (.40, .35, .25), (.40, .15, .45),
+        (.25, .25, .50), (.50, .30, .20), (.20, .40, .40),
+        (.20, .20, .60), (.65, .15, .20), (.30, .45, .25),
+        (.40, .40, .20), (.30, .20, .50), (.45, .30, .25),
+        (.25, .45, .30), (.25, .15, .60), (.45, .15, .40),
+    )
+    remaining = budget.usable_prbs - sum(minimum)
     if remaining < 0:
-        raise ValueError("slice minimums exceed physical cell capacity")
-    fractional = [x * remaining for x in shares]
-    base = [math.floor(x) for x in fractional]
-    residual = remaining - sum(base)
-    order = sorted(range(3), key=lambda k: (-(fractional[k] - base[k]), k))
-    for index in order[:residual]:
-        base[index] += 1
-    result = SliceAllocation(tuple(int(a + b) for a, b in zip(base, minimums, strict=True)), scheduler)
-    result.validate(cell, minimums=minimums)
-    return result
-
-
-def commag_physical_budget_config(path: str) -> dict[str, object]:
-    """Load validated physical capacities for COMMAG BS IDs.
-
-    Crucially, this is *not* obtained by taking quantiles of the observed
-    allocations. A domain expert must confirm that COMMAG slice_prb and the
-    :prb=<N> action tokens denote physical PRBs at this configured cell.
-    Otherwise refuse to certify an offline physical PRB comparison.
-    """
-    import json
-    from pathlib import Path
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    if raw.get("confirmed_commag_prb_units") is not True:
-        raise ValueError(
-            "must explicitly confirm dataset action PRB unit equivalence "
-            "before replacing the offline budget proxy"
-        )
-    cells = raw.get("cells")
-    if not isinstance(cells, dict) or not cells:
-        raise ValueError("physical COMMAG config requires mapped base-station cells")
-    budgets = {}
-    for bs, spec in cells.items():
-        if not isinstance(spec, dict):
-            raise ValueError("invalid cell config")
-        cell = NRCellCapacity.from_config(spec)
-        if cell.cell_id != bs:
-            raise ValueError("BS mapping must equal physical cell ID")
-        budgets[str(bs)] = cell.available_prbs
-    return {
-        "budget_by_base_station": budgets,
-        "global_budget": 0,  # never silently substitute capacity for unmapped base station
-        "quantile": None,
-        "training_groups": 0,
-        "budget_units": "explicit_NR_FR1_physical_PRBs_confirmed_by_operator",
-        "physical_capacity_confirmed": True,
-        "shared_scheduler_required": raw.get("per_slice_schedulers_supported") is not True,
-        "source_config": path,
-    }
+        raise ValueError("insufficient physical BWP capacity")
+    seen = set()
+    options = []
+    for weights in fractions:
+        raw = [remaining * w for w in weights]
+        counts = [int(x) for x in raw]
+        n_extra = remaining - sum(counts)
+        for i in sorted(range(3), key=lambda j: -(raw[j] - counts[j]))[:n_extra]:
+            counts[i] += 1
+        prbs = tuple(counts[i] + minimum[i] for i in range(3))
+        if prbs not in seen:
+            choice = JointAction(prbs)
+            choice.validate(budget, minimum)
+            options.append(choice)
+            seen.add(prbs)
+    return options

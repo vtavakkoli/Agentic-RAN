@@ -16,10 +16,12 @@ utility. v3 adds a JOINT decision layer:
    one-second timestamp. Aggregate the *recorded* multiple UE KPI
    observations by mean within the same BS/slice/second. Discard and
    report BS-seconds missing any slice; do not fabricate missing context.
-2. Estimate a **PRB-budget proxy** from contemporaneous slice-PRB counts
-   in the *policy-fit training role only* (90th percentile by base
-   station). It is a statistical proxy for testing, **not** a measured
-   physical gNB resource cap or a validated joint-actuation protocol.
+2. Require an explicit **carrier/BWP physical PRB manifest** derived
+   from the actual NR PHY/MAC configuration, with total integer PRBs,
+   reserved PRBs, carrier ID, BWP ID, and numerology per base station.
+   The old 90th-percentile historical allocation **14-PRB proxy has
+   been removed from the active JAGC path**. When the physical
+   manifest is missing or unverified, evaluation fails closed.
 3. Consider candidate recorded COMMAG scheduler/PRB action labels only
    when observed in both policy and independent OPE training roles.
    Apply the original policy-side SLA/uncertainty/OOD eligibility gates
@@ -54,6 +56,9 @@ cd Agentic-RAN
 git pull --ff-only
 
 $env:AGENTIC_RAN_EVAL_JOINT_SLICE_ADVANTAGE = "1"
+# Requires configs/jagc_phy_bwp.json from ACTUAL recorded PHY/BWP configuration.
+# Do NOT copy a capacity from COMMAG action labels.
+$env:AGENTIC_RAN_JAGC_BWP_MANIFEST = "/workspace/configs/jagc_phy_bwp.json"
 $env:AGENTIC_RAN_EVAL_MATCHED_WRAPPERS = "1"
 $env:AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD = "1"
 
@@ -73,8 +78,9 @@ Outputs under results/publication:
 - research_joint_slice_decisions.csv.gz: selected/original three-slice
   actions, group-level independent-DM difference, budget diagnostics,
   cluster/scenario/config/experiment identifiers
-- research_joint_slice_selection.json: training-only budget calibration,
-  group alignment and paired-cluster uncertainty per split
+- research_joint_slice_selection.json: externally reported physical
+  carrier/BWP resource budget and provenance, group alignment and
+  paired-cluster uncertainty per split
 - publication_summary.json: research_joint_slice_advantage section
 
 Check the results with PowerShell:
@@ -132,3 +138,37 @@ use matched radio seeds and per-slice SLA budgets, and compare
 executed original Agentic-RAN, PULSE-RAN, FQI, CQL, and JAGC.
 The code will report an original-controller winner if validation
 does not support the new policy; it does not force any gain.
+
+## Physical capacity manifest (required; no synthetic fallback)
+
+Create `configs/jagc_phy_bwp.json` only after obtaining actual BWP
+geometry from an ns-3/5G-LENA NR PHY/MAC scheduler or Colosseum's
+configured radio. The following is a **schema illustration only**;
+52 is NOT a verified capacity for the historical COMMAG experiment:
+
+~~~json
+{
+  "schema": "jagc-phy-bwp-v1",
+  "cells": {
+    "bs1": {
+      "backend": "ns3-5glena",
+      "source": "nr_phy_observed",
+      "carrier_id": "actual-carrier-id",
+      "bwp_id": "actual-dl-bwp-id",
+      "total_prbs": 52,
+      "reserved_prbs": 4,
+      "numerology": 1
+    }
+  }
+}
+~~~
+
+This is an *asserted evidence contract*, not cryptographic attestation.
+Every base station in the benchmark must have a matching actual BWP
+entry; the runner will not infer capacities from historical allocations.
+A capability taken from an unrelated simulator configuration is not
+proof of the historical COMMAG site's physical resources.
+
+For genuine action-dependent results use the separate
+[external closed-loop runner](PHYSICAL_CLOSED_LOOP_RESEARCH.md), with
+real next-state measurements from an executable 5G-LENA/Colosseum loop.
