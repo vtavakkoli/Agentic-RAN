@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,22 @@ def evaluate(
     science_config: str | Path,
     seed: int | None = None,
 ) -> dict[str, Any]:
+    # Reject invalid physical-study setup before reading the large COMMAG CSV,
+    # training the cross-fit models or spending hours on calibration.
+    if os.environ.get("AGENTIC_RAN_EVAL_JOINT_SLICE_ADVANTAGE", "0") == "1":
+        manifest = os.environ.get("AGENTIC_RAN_JAGC_BWP_MANIFEST")
+        if not manifest:
+            raise RuntimeError(
+                "JAGC enabled but AGENTIC_RAN_JAGC_BWP_MANIFEST is unset. "
+                "Supply a measured NR-PHY/BWP capacity manifest or disable "
+                "AGENTIC_RAN_EVAL_JOINT_SLICE_ADVANTAGE; no proxy is allowed."
+            )
+        if not Path(manifest).is_file():
+            raise FileNotFoundError(
+                f"JAGC physical BWP manifest not found: {manifest}. "
+                "Supply verified physical-capacity evidence, or disable the "
+                "optional joint-slice experiment. No synthetic manifest is generated."
+            )
     science = load_science_config(science_config)
     return run_final_benchmark(
         data_path,

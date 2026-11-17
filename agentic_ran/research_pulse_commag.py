@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,9 @@ def build_shadow(
             raise ValueError(f"invalid or nonfinite COMMAG measurement: {name}")
     if (data["dl_buffer_bytes"] < 0).any() or (data["slice_prb"] < 0).any():
         raise ValueError("negative buffer or PRB telemetry")
+    started = time.monotonic()
+    print(f"[PULSE-COMMAG] Validated {len(data):,} trace rows; "
+          "aggregating base-station/slice observations", flush=True)
     # Real traces are per-UE/per-slice. Aggregate only within the exact same
     # observed base-station, configuration, experiment and second.
     observed_keys = data.groupby(list(GROUP), observed=True).size().rename("rows")
@@ -77,6 +81,8 @@ def build_shadow(
         recorded_reward=("reward", "mean"),
         ue_trace_rows=("reward", "size"),
     )
+    print(f"[PULSE-COMMAG] Grouping complete: {len(grouped):,} slice groups "
+          f"in {time.monotonic() - started:.1f}s; aligning slices", flush=True)
     queue = grouped.pivot(index=list(GROUP), columns="slice_type", values="queue_bytes")
     rbg = grouped.pivot(index=list(GROUP), columns="slice_type", values="recorded_rbg")
     reward = grouped.pivot(index=list(GROUP), columns="slice_type", values="recorded_reward")
@@ -90,6 +96,8 @@ def build_shadow(
     train = joint.index.get_level_values("publication_split") == "train"
     if not np.any(train):
         raise ValueError("No aligned COMMAG training observations for normalization")
+    print(f"[PULSE-COMMAG] Aligned {len(joint):,} three-slice observations "
+          f"in {time.monotonic() - started:.1f}s; calibrating", flush=True)
     # Calibrate only on real train buffers; never on validation/test states.
     training = joint.loc[train, ["eMBB", "URLLC"]]
     scales = training.quantile(train_quantile)
@@ -189,6 +197,8 @@ def build_shadow(
             "COMMAG is a Colosseum-emulator dataset; it does not launch ns-3 or a fresh Colosseum control loop.",
         ],
     }
+    print(f"[PULSE-COMMAG] Generated {len(output):,} recommendations "
+          f"in {time.monotonic() - started:.1f}s", flush=True)
     return output, summary
 
 
@@ -206,12 +216,16 @@ def run(
         )
     # Avoid loading the many unused next_* future variables, and keep
     # dataset-backed shadow selection independent of logged outcomes.
+    print(f"[PULSE-COMMAG] Loading {source} "
+          f"({source.stat().st_size / 1024**2:.1f} MiB compressed)", flush=True)
     frame = pd.read_csv(source, usecols=list(REQUIRED), low_memory=False)
+    print(f"[PULSE-COMMAG] Loaded {len(frame):,} rows", flush=True)
     recommendations, summary = build_shadow(
         frame, train_quantile=train_quantile,
     )
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
+    print("[PULSE-COMMAG] Writing compressed recommendations", flush=True)
     recommendations.to_csv(
         destination / "pulse_commag_shadow_recommendations.csv.gz",
         index=False, compression="gzip",
@@ -220,6 +234,7 @@ def run(
         json.dumps(summary, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
+    print(f"[PULSE-COMMAG] Completed: {destination}", flush=True)
     return summary
 
 
