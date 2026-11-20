@@ -1,7 +1,8 @@
 # End-to-end verification. Runs actual externally configured RAN Gym only with -External.
 param(
     [switch]$External,
-    [switch]$RunJointSlice
+    [switch]$RunJointSlice,
+    [switch]$FullResearch
 )
 $ErrorActionPreference = "Stop"
 Set-Location (Resolve-Path (Join-Path $PSScriptRoot ".."))
@@ -15,6 +16,21 @@ try {
         throw "Docker CLI is not installed"
     }
     Invoke-Docker -Arguments @("info", "--format", "{{.NCPU}} available CPUs")
+    if ($FullResearch) {
+        $env:AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD = "1"
+        $env:AGENTIC_RAN_EVAL_MATCHED_WRAPPERS = "1"
+        $env:AGENTIC_RAN_EVAL_CONFORMAL_RERANK = "1"
+        $env:AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS = "1"
+        $env:AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT = "1"
+        $env:AGENTIC_RAN_EVAL_ADAPTIVE_HYBRID = "1"
+    } else {
+        $env:AGENTIC_RAN_EXPERIMENTAL_SUPPORT_GUARD = "0"
+        $env:AGENTIC_RAN_EVAL_MATCHED_WRAPPERS = "0"
+        $env:AGENTIC_RAN_EVAL_CONFORMAL_RERANK = "0"
+        $env:AGENTIC_RAN_EVAL_BEHAVIOR_VARIANTS = "0"
+        $env:AGENTIC_RAN_EVAL_SAFE_IMPROVEMENT = "0"
+        $env:AGENTIC_RAN_EVAL_ADAPTIVE_HYBRID = "0"
+    }
     if ($RunJointSlice) {
         if (-not (Test-Path "configs/jagc_phy_bwp.json")) {
             throw "JAGC requires verified physical BWP capacities in configs/jagc_phy_bwp.json"
