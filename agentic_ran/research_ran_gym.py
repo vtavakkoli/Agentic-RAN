@@ -164,7 +164,7 @@ def paired_statistics(candidate: pd.DataFrame, baseline: pd.DataFrame, *,
         # Exact sign-flip randomization on matched *episodes*, not individual steps.
         signs = np.arange(1 << len(differences), dtype=np.uint32)
         flipped = np.array([
-            np.mean(differences * (2 * ((i >> np.arange(len(differences))) & 1) - 1))
+            np.mean(differences * (2 * ((i >> np.arange(len(differences))) & 1).astype(int) - 1))
             for i in signs
         ])
     else:
@@ -219,6 +219,13 @@ def run(config_file: Path, output_dir: Path, *, require_superiority: bool = Fals
             raise ValueError("external simulator revision must be recorded")
         if not params.get("frozen_model_sha256"):
             raise ValueError("external candidate must identify the frozen model SHA-256")
+    if backend != "toy-gym-smoke":
+        model_path = Path(params.get("frozen_model_path", ""))
+        if not model_path.is_file():
+            raise FileNotFoundError("External comparison requires readable frozen_model_path")
+        observed_sha = hashlib.sha256(model_path.read_bytes()).hexdigest()
+        if observed_sha != params["frozen_model_sha256"]:
+            raise ValueError("Frozen model SHA-256 does not match configured model")
     env_factory, env_source = load_factory(params["environment_factory"])
     loaded = {key: load_factory(spec) for key, spec in factories.items()}
     strict_receipt = bool(params.get("require_applied_action_receipt", backend != "toy-gym-smoke"))
