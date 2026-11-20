@@ -12,19 +12,25 @@ RUN mkdir -p /workspace/results /workspace/artifacts
 # Optional full ns-O-RAN simulator *inside this Docker image*.
 # The native simulator is large and built only when targeting "nsoran".
 # Source origins follow the official OpenRAN Gym ns-O-RAN install guide.
-FROM runtime AS nsoran
+FROM python:3.11-bullseye AS nsoran
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /workspace
+COPY pyproject.toml README.md LICENSE ./
+COPY agentic_ran ./agentic_ran
+COPY tests ./tests
+COPY configs ./configs
 USER root
 ARG NSORAN_BUILD_JOBS=8
-ARG NSORAN_E2SIM_SHA=951b3e9e99b47260f1525d2a95fa4b2f8065530e
+ARG NSORAN_E2SIM_SHA=275f58fff459975cfcaf75e5b53c338a2bb08166
 ARG NSORAN_NS3_SHA=0efbfaf370350c170beb249951e5c349d7f89b34
-ARG NSORAN_INTERFACE_SHA=cf1a4bce7b40b09a80abff05e7a30c113d36353b
+ARG NSORAN_INTERFACE_SHA=2db7a071963a85505d8f694310844f2f4ea26ddc
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        git ca-certificates build-essential g++ cmake ninja-build pkg-config \
        libsctp-dev lksctp-tools autoconf automake libtool bison flex \
        libboost-all-dev libsqlite3-dev libgsl-dev libxml2-dev libgtk-3-dev \
     && rm -rf /var/lib/apt/lists/*
-RUN python -m pip install --no-cache-dir "nsoran==0.0.2"
+RUN python -m pip install --no-cache-dir ".[ran-gym,dev]" "nsoran==0.0.2"
 RUN git clone https://github.com/wineslab/o-ran-e2sim.git /opt/e2sim \
     && git -C /opt/e2sim checkout --detach "${NSORAN_E2SIM_SHA}"
 WORKDIR /opt/e2sim/e2sim/build
@@ -38,7 +44,7 @@ RUN git clone https://github.com/wineslab/ns-o-ran-ns3-mmwave.git /opt/ns3-mmwav
     && git clone https://github.com/o-ran-sc/sim-ns3-o-ran-e2.git /opt/ns3-mmwave-oran/contrib/oran-interface \
     && git -C /opt/ns3-mmwave-oran/contrib/oran-interface checkout --detach "${NSORAN_INTERFACE_SHA}"
 WORKDIR /opt/ns3-mmwave-oran
-RUN ./ns3 configure --enable-examples --build-profile=optimized --out=build/optimized \
+RUN ./ns3 configure --enable-examples --disable-werror --build-profile=optimized --out=build/optimized \
     && ./ns3 build -j "${NSORAN_BUILD_JOBS}" \
     && test -f .lock-ns3_linux_build \
     && ln -s /opt/ns3-mmwave-oran /opt/ns3
