@@ -85,6 +85,9 @@ def episode(
         observation, info = env.reset(seed=seed)
         if not isinstance(info, dict):
             raise ValueError("Gymnasium reset must return (observation, info dict)")
+        initial_state_sha256 = hashlib.sha256(
+            json.dumps(normalized(observation), sort_keys=True, allow_nan=False).encode("utf-8")
+        ).hexdigest()
         previous = None
         t0 = time.monotonic()
         for index in range(steps):
@@ -130,6 +133,7 @@ def episode(
             raise RuntimeError("environment produced no executed steps")
         return {
             "policy": label, "scenario": scenario, "seed": seed, "steps": len(lines),
+            "initial_state_sha256": initial_state_sha256,
             "total_reward": sum(row["reward"] for row in lines),
             "mean_reward": float(np.mean([row["reward"] for row in lines])),
             "switch_rate": float(np.mean([row["action_changed"] for row in lines])),
@@ -268,6 +272,13 @@ def run(config_file: Path, output_dir: Path, *, require_superiority: bool = Fals
                 step_rows.extend(trace)
     episodes = pd.DataFrame(episode_rows)
     steps_df = pd.DataFrame(step_rows)
+    if params.get("require_matched_initial_observation", True):
+        initial_counts = episodes.groupby(["scenario", "seed"])["initial_state_sha256"].nunique()
+        if not initial_counts.eq(1).all():
+            raise ValueError(
+                "Paired simulator reset states differ for the same scenario and seed; "
+                "reproducible matched interventions cannot be claimed"
+            )
     candidate = episodes[episodes["policy"].eq("candidate")]
     comparisons = {}
     for baseline in factories:
@@ -308,6 +319,9 @@ def run(config_file: Path, output_dir: Path, *, require_superiority: bool = Fals
         "frozen_model_sha256": params.get("frozen_model_sha256"),
         "environment_factory": env_source,
         "policy_factories": {key: provenance for key, (_, provenance) in loaded.items()},
+        "matched_initial_observations_checked": bool(
+            params.get("require_matched_initial_observation", True)
+        ),
         "heldout_scenarios": scenarios, "heldout_seeds": seeds,
         "episodes": len(episode_rows), "steps": len(step_rows),
         "compared_methods": list(factories), "comparisons": comparisons,
