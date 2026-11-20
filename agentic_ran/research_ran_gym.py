@@ -74,7 +74,7 @@ def episode(
     strict_receipt: bool,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """One new environment per policy/scenario/seed; never replay rewards."""
-    env = env_factory(scenario, seed, parameters)
+    env = env_factory(scenario, seed, {**parameters, "policy_label": label})
     lines: list[dict[str, Any]] = []
     try:
         if not hasattr(env, "reset") or not hasattr(env, "step") or not hasattr(env, "action_space"):
