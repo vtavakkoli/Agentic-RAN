@@ -101,9 +101,26 @@ def make_nsoran_traffic_steering(scenario: str, seed: int, config: dict[str, Any
     if not ns3_path.is_dir() or not scenario_file.is_file():
         raise FileNotFoundError("ns-O-RAN simulator and scenario configuration must be mounted")
     scenario_configuration = json.loads(scenario_file.read_text(encoding="utf-8"))
+    # Gymnasium's reset(seed=...) does not pass ns-3 RngRun to upstream
+    # by default. Bind each matched seed to its simulator disturbance stream.
+    scenario_configuration["RngRun"] = [int(seed)]
     run_dir = Path(config.get("run_root", "/workspace/results/ran-gym-native")) / scenario / str(seed) / str(config.get("policy_label", "unknown-policy"))
     run_dir.mkdir(parents=True, exist_ok=True)
-    return TrafficSteeringEnv(
+
+    class PrebuiltTrafficSteeringEnv(TrafficSteeringEnv):
+        def configure_and_build_ns3(self) -> None:
+            if not bool(config.get("skip_ns3_rebuild", True)):
+                return super().configure_and_build_ns3()
+            # Compiled during Docker build. Avoid recompiling the entire
+            # ns-3 simulator for *every* policy and held-out episode.
+            build_marker = Path(self.ns3_path) / ".lock-ns3_linux_build"
+            if not build_marker.is_file():
+                raise FileNotFoundError(
+                    f"ns-3 build marker missing at {build_marker}; "
+                    "run Docker build with the nsoran stage"
+                )
+
+    return PrebuiltTrafficSteeringEnv(
         ns3_path=str(ns3_path),
         scenario_configuration=scenario_configuration,
         output_folder=str(run_dir),
