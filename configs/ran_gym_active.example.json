@@ -48,7 +48,7 @@
   "require_applied_action_receipt": true,
   "observation_action_mapping_documented": false,
   "simulator_revision": "REPLACE_WITH_IMMUTABLE_NS3_COMMIT",
-  "frozen_model_path": "/workspace/artifacts/publication_models.joblib",
+  "frozen_model_path": "/workspace/results/publication/publication_models.joblib",
   "frozen_model_sha256": "REPLACE_WITH_SHA256",
   "ns3_path": "/opt/ns3",
   "scenario_configuration": "/workspace/configs/nsoran_ts_use_case.json",
