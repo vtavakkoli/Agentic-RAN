@@ -154,7 +154,14 @@ def paired_statistics(candidate: pd.DataFrame, baseline: pd.DataFrame, *,
     )
     if len(merged) != len(candidate) or len(merged) != len(baseline):
         raise ValueError("unmatched policy episodes; refuse unpaired performance claims")
-    differences = (merged["total_reward_candidate"] - merged["total_reward_baseline"]).to_numpy(float)
+    # The same simulator seed can recur across scenarios. Bootstrap and
+    # randomize independent *seed clusters*, not correlated scenario episodes.
+    scenarios_per_seed = merged.groupby("seed")["scenario"].nunique()
+    if scenarios_per_seed.nunique() != 1:
+        raise ValueError("unbalanced scenarios per seed")
+    differences = merged.assign(
+        delta=merged["total_reward_candidate"] - merged["total_reward_baseline"]
+    ).groupby("seed", sort=True)["delta"].mean().to_numpy(dtype=float)
     if not len(differences) or not np.isfinite(differences).all():
         raise ValueError("missing/nonfinite paired reward")
     rng = np.random.default_rng(seed)
@@ -178,14 +185,15 @@ def paired_statistics(candidate: pd.DataFrame, baseline: pd.DataFrame, *,
     sla_ci = None
     if (merged["mean_sla_violation_rate_candidate"].notna().all()
             and merged["mean_sla_violation_rate_baseline"].notna().all()):
-        sla_diff = (
-            merged["mean_sla_violation_rate_candidate"]
-            - merged["mean_sla_violation_rate_baseline"]
-        ).to_numpy(dtype=float)
+        sla_diff = merged.assign(
+            delta=merged["mean_sla_violation_rate_candidate"]
+                  - merged["mean_sla_violation_rate_baseline"]
+        ).groupby("seed", sort=True)["delta"].mean().to_numpy(dtype=float)
         sla_ci = [float(x) for x in np.quantile(sla_diff[sample_indices].mean(axis=1), [0.025, 0.975])]
         sla_non_regression = sla_ci[1] <= 0.01
     return {
-        "paired_episodes": int(len(differences)),
+        "paired_episodes": int(len(merged)),
+        "independent_seed_clusters": int(len(differences)),
         "mean_total_reward_delta": actual,
         "bootstrap_ci95": [float(x) for x in np.quantile(means, [0.025, 0.975])],
         "one_sided_sign_flip_p": p_value,
