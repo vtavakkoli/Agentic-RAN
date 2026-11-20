@@ -6,8 +6,9 @@ A full COMMAG offline benchmark is **not** evidence that a controller improved
 a network after its actions were executed. `pulse-commag` is a descriptive
 shadow replay. A toy three-slice RAN is **only** a deterministic pipeline smoke test.
 
-The optional **ns-O-RAN Gym** backend runs against a separately installed
-ns-O-RAN/ns-3 simulator (wineslab/ns-o-ran-gym, `nsoran` package).
+The optional **ns-O-RAN Gym** backend now builds the full ns-O-RAN/ns-3
+stack inside the `nsoran` Docker image (wineslab/ns-o-ran-gym, `nsoran` package).
+See [Docker-native ns-O-RAN](DOCKER_NSORAN.md).
 Its stock TrafficSteeringEnv operates on *UE handovers*, not COMMAG
 scheduler/PRB actions; stock EnergySavingEnv operates on *cell energy states*.
 The 17 COMMAG features and scheduler:prb labels must NEVER silently be
@@ -88,10 +89,11 @@ the stock traffic-steering/energy-saving environments.
 
 ## Actual external ns-O-RAN Gym experiment
 
-1. Install a **Linux-compatible compiled ns-O-RAN/ns-3** under an accessible
-   host directory. Merely mounting a Windows binary or the source tree will
-   not provide a runnable ns-3 simulation. Set `$env:RAN_GYM_NS3_DIR` to that
-   directory.
+1. Build the pinned simulator **directly in Docker** (no host ns-3): run
+   `docker compose -f docker-compose.ran-gym.yml --profile native up --build --exit-code-from ran-gym-nsoran-smoke ran-gym-nsoran-smoke`.
+   This checks a stock traffic-steering environment only, **not** the
+   frozen COMMAG scheduler/PRB policy. To validate that policy, the ns-3
+   scenario itself still needs compatible scheduler/PRB actuation.
 2. Copy `configs/ran_gym_active.example.json` to
    `configs/ran_gym_active.json` and set the actual simulator revision,
    simulator scenario JSON path, model source and checksum. The example is
@@ -123,11 +125,12 @@ the stock traffic-steering/energy-saving environments.
    Never load untrusted `.joblib` artifacts.
 
 ~~~powershell
-$env:RAN_GYM_NS3_DIR = "C:\path\to\linux-compatible\ns3"
-.\scripts\verify_publication.ps1 -FullResearch -External
+.\scripts\verify_publication.ps1 -FullResearch -NativeGym
 ~~~
 
-Run the active experiment without repeating the expensive offline run:
+Run a real compatible PRB/scheduler active experiment (requires the
+validated adapter and modified native simulator scenario, not the stock
+traffic-steering example) without repeating the expensive offline run:
 
 ~~~powershell
 docker compose -f docker-compose.ran-gym.yml --profile external up --build --exit-code-from ran-gym-active ran-gym-active
