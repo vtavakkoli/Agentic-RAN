@@ -1,0 +1,57 @@
+{
+  "schema": "agentic-ran-gym-benchmark-v1",
+  "backend": "ns-o-ran-gym",
+  "environment_factory": "agentic_ran.research_ran_gym_adapters:make_nsoran_traffic_steering",
+  "policies": {
+    "candidate": "site_adapter:make_frozen_agentic_ran_traffic_steering_policy",
+    "noop": "site_adapter:make_fair_traffic_steering_baseline",
+    "reference": "site_adapter:make_published_ts_reference_policy"
+  },
+  "scenarios": [
+    "scenario-one"
+  ],
+  "training_seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "validation_seeds": [
+    11,
+    12,
+    13,
+    14
+  ],
+  "test_seeds": [
+    501,
+    502,
+    503,
+    504,
+    505,
+    506,
+    507,
+    508,
+    509,
+    510,
+    511,
+    512,
+    513,
+    514,
+    515,
+    516,
+    517,
+    518,
+    519,
+    520
+  ],
+  "max_steps": 30,
+  "require_applied_action_receipt": true,
+  "observation_action_mapping_documented": false,
+  "simulator_revision": "REPLACE_WITH_IMMUTABLE_NS3_COMMIT",
+  "frozen_model_path": "/workspace/artifacts/publication_models.joblib",
+  "frozen_model_sha256": "REPLACE_WITH_SHA256",
+  "ns3_path": "/opt/ns3",
+  "scenario_configuration": "/workspace/configs/nsoran_ts_use_case.json",
+  "run_root": "/workspace/results/ran-gym-native",
+  "optimized": true
+}
