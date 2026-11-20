@@ -58,6 +58,38 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
+  ran-gym:
+    name: RAN Gym matched-policy smoke (toy only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install Gymnasium test dependencies
+        run: python -m pip install -e ".[dev,ran-gym]"
+      - name: Matched-pair inference and safety regression tests
+        run: python -m pytest -q tests/test_ran_gym_benchmark.py
+      - name: Gymnasium rollout smoke (not an active 5G test)
+        run: |
+          python -m agentic_ran.research_ran_gym --config configs/ran_gym_smoke.json --output results/ran-gym-smoke
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("results/ran-gym-smoke/ran_gym_summary.json").read_text())
+          assert report["is_toy_smoke"] is True
+          assert report["publication_superiority_ready"] is False
+          assert report["episodes"] > 0
+          PY
+      - name: Docker test image and Gym smoke
+        run: |
+          mkdir -p results artifacts
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f docker-compose.ran-gym.yml build ran-gym-unit ran-gym-smoke
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f docker-compose.ran-gym.yml run --rm ran-gym-unit
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f docker-compose.ran-gym.yml run --rm ran-gym-smoke
+
   package:
     name: Package
     runs-on: ubuntu-latest
