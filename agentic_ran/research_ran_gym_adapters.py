@@ -112,6 +112,16 @@ def make_nsoran_traffic_steering(scenario: str, seed: int, config: dict[str, Any
     )
 
 
+from functools import lru_cache
+
+
+@lru_cache(maxsize=2)
+def _load_trusted_publication_models(path: str, sha256: str) -> Any:
+    import joblib
+    # The command-line runner checks the sha256 before calling this factory.
+    return joblib.load(path)
+
+
 def make_frozen_commag_agentic_policy(config: dict[str, Any], action_space: Any) -> Any:
     """Evaluate the *actual* frozen cross-fitted COMMAG policy, not a toy heuristic.
 
@@ -122,8 +132,6 @@ def make_frozen_commag_agentic_policy(config: dict[str, Any], action_space: Any)
     The caller and publication authors must validate these mappings.
     """
     from dataclasses import fields, replace
-    from functools import lru_cache
-    import joblib
     import pandas as pd
 
     from agentic_ran.offline_policy import STATE_COLUMNS
@@ -143,13 +151,11 @@ def make_frozen_commag_agentic_policy(config: dict[str, Any], action_space: Any)
         raise ValueError("select an explicitly frozen policy_fold, e.g. policy_exp1")
     obs_mapper, _ = load_factory(config["observation_mapper"])
     action_mapper, _ = load_factory(config["action_mapper"])
-    # Loading joblib can execute code; only locally trusted checksum-verified
-    # artifacts may be supplied (outer runner already checks model SHA-256).
-    @lru_cache(maxsize=1)
-    def loaded() -> Any:
-        return joblib.load(model_path)
-
-    fitted = loaded()
+    # Only locally trusted checksum-verified artifacts may be used.
+    # Cache the frozen model across repeated matched simulator episodes.
+    fitted = _load_trusted_publication_models(
+        str(model_path.resolve()), str(config["frozen_model_sha256"])
+    )
     if not isinstance(fitted, dict) or not isinstance(fitted.get("folds"), dict):
         raise ValueError("expected cross-fitted publication_models.joblib")
     if fold_name not in fitted["folds"]:
