@@ -119,3 +119,14 @@ def test_toy_smoke_cannot_force_superiority(tmp_path):
     with pytest.raises(RuntimeError, match="NOT demonstrated"):
         run(path, tmp_path / "out", require_superiority=True)
     assert (tmp_path / "out" / "ran_gym_summary.json").exists()
+
+
+def test_frozen_commag_controller_rejects_stock_handover_gym():
+    from agentic_ran.research_ran_gym_adapters import make_frozen_commag_agentic_policy
+
+    with pytest.raises(ValueError, match="cannot control"):
+        make_frozen_commag_agentic_policy(
+            {"environment_factory":
+             "agentic_ran.research_ran_gym_adapters:make_nsoran_traffic_steering"},
+            object(),
+        )
