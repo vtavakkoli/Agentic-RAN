@@ -174,12 +174,24 @@ def paired_statistics(candidate: pd.DataFrame, baseline: pd.DataFrame, *,
     actual = float(np.mean(differences))
     p_value = float((np.sum(flipped >= actual - 1e-12) + (0 if len(differences) <= 18 else 1)) /
                     (len(flipped) + (0 if len(differences) <= 18 else 1)))
+    sla_non_regression = None
+    sla_ci = None
+    if (merged["mean_sla_violation_rate_candidate"].notna().all()
+            and merged["mean_sla_violation_rate_baseline"].notna().all()):
+        sla_diff = (
+            merged["mean_sla_violation_rate_candidate"]
+            - merged["mean_sla_violation_rate_baseline"]
+        ).to_numpy(dtype=float)
+        sla_ci = [float(x) for x in np.quantile(sla_diff[sample_indices].mean(axis=1), [0.025, 0.975])]
+        sla_non_regression = sla_ci[1] <= 0.01
     return {
         "paired_episodes": int(len(differences)),
         "mean_total_reward_delta": actual,
         "bootstrap_ci95": [float(x) for x in np.quantile(means, [0.025, 0.975])],
         "one_sided_sign_flip_p": p_value,
         "p_method": "exact" if len(differences) <= 18 else "monte_carlo",
+        "sla_regression_ci95": sla_ci,
+        "sla_non_regression": sla_non_regression,
         "candidate_mean_reward": float(merged["total_reward_candidate"].mean()),
         "baseline_mean_reward": float(merged["total_reward_baseline"].mean()),
     }
@@ -223,7 +235,11 @@ def run(config_file: Path, output_dir: Path, *, require_superiority: bool = Fals
         model_path = Path(params.get("frozen_model_path", ""))
         if not model_path.is_file():
             raise FileNotFoundError("External comparison requires readable frozen_model_path")
-        observed_sha = hashlib.sha256(model_path.read_bytes()).hexdigest()
+        digest = hashlib.sha256()
+        with model_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        observed_sha = digest.hexdigest()
         if observed_sha != params["frozen_model_sha256"]:
             raise ValueError("Frozen model SHA-256 does not match configured model")
     env_factory, env_source = load_factory(params["environment_factory"])
@@ -259,6 +275,13 @@ def run(config_file: Path, output_dir: Path, *, require_superiority: bool = Fals
         comparisons[name]["holm_adjusted_p"] = running
         c = comparisons[name]
         c["significant_gain"] = bool(c["bootstrap_ci95"][0] > 0 and running < 0.05)
+    service_complete = bool(
+        episodes[["mean_throughput_mbps", "mean_latency_ms", "mean_sla_violation_rate"]]
+        .notna().all().all()
+    )
+    sla_ok = bool(comparisons) and all(
+        d["sla_non_regression"] is True for d in comparisons.values()
+    )
     # A *realized* advantage is only claimed when every matched comparison passes.
     all_superior = bool(comparisons) and all(
         d["significant_gain"] for d in comparisons.values()
@@ -281,7 +304,12 @@ def run(config_file: Path, output_dir: Path, *, require_superiority: bool = Fals
         "episodes": len(episode_rows), "steps": len(step_rows),
         "compared_methods": list(factories), "comparisons": comparisons,
         "all_baselines_significantly_outperformed": all_superior,
-        "publication_superiority_ready": all_superior and backend != "toy-gym-smoke" and strict_receipt,
+        "service_metrics_complete": service_complete,
+        "all_baselines_sla_nonregression": sla_ok,
+        "publication_superiority_ready": (
+            all_superior and sla_ok and service_complete
+            and backend != "toy-gym-smoke" and strict_receipt
+        ),
         "limitations": [
             "The repository cannot independently attest the external simulator backend.",
             "Gym.step feedback is simulator reward, not real-network performance.",
