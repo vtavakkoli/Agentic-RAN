@@ -38,7 +38,11 @@ docker compose -f docker-compose.ran-gym.yml run --rm ran-gym-smoke
 
 The complete automated verification uses the full COMMAG dataset and may be
 expensive. Preparation caching is reused, while the cross-fitted publication
-benchmark is rerun.
+benchmark is rerun. Pass `-FullResearch` to include the optional support guard,
+matched wrappers, conformal reranking, behavioral methods, safe improvement and
+adaptive hybrid ablations. Add `-RunJointSlice` **only** after supplying a
+verified physical BWP capacity manifest. The full-research run may take much
+longer because the publication cross-fit loop is still sequential.
 
 
 ## Using the actual frozen COMMAG-trained Agentic-RAN controller
@@ -120,7 +124,7 @@ the stock traffic-steering/energy-saving environments.
 
 ~~~powershell
 $env:RAN_GYM_NS3_DIR = "C:\path\to\linux-compatible\ns3"
-.\scripts\verify_publication.ps1 -External
+.\scripts\verify_publication.ps1 -FullResearch -External
 ~~~
 
 Run the active experiment without repeating the expensive offline run:
