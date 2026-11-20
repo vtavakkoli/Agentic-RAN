@@ -2,7 +2,8 @@
 param(
     [switch]$External,
     [switch]$RunJointSlice,
-    [switch]$FullResearch
+    [switch]$FullResearch,
+    [switch]$NativeGym
 )
 $ErrorActionPreference = "Stop"
 Set-Location (Resolve-Path (Join-Path $PSScriptRoot ".."))
@@ -49,20 +50,24 @@ try {
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "build", "ran-gym-unit", "ran-gym-smoke")
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "run", "--rm", "ran-gym-unit")
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "run", "--rm", "ran-gym-smoke")
+    if ($NativeGym -or $External) {
+        # Build and execute the official ns-O-RAN/ns-3 engine *in Docker*.
+        # Stock TS actions are handovers; this is a native integration check,
+        # not evidence that COMMAG-trained Agentic-RAN beat other policies.
+        Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "--profile", "native",
+            "up", "--build", "--exit-code-from", "ran-gym-nsoran-smoke", "ran-gym-nsoran-smoke")
+    }
     if (-not $External) {
-        Write-Host "Offline pipeline and toy Gym checks complete. No ns-O-RAN active result was tested." -ForegroundColor Yellow
+        Write-Host "Offline pipeline and toy Gym checks complete. No compatible PRB controller active result was tested." -ForegroundColor Yellow
         Write-Host "For active verification configure external ns-O-RAN and re-run with -External." -ForegroundColor Yellow
         exit 0
     }
     # 4. Actual ns-O-RAN requires site-supplied model/action adapter + compiled ns-3.
     if (-not (Test-Path "configs/ran_gym_active.json")) {
-        throw "Create configs/ran_gym_active.json from the example with a real compatible model/adapter"
+        throw "Create configs/ran_gym_active.json with a real PRB-compatible model/adapter; ns-3 is now built inside Docker"
     }
     if (-not (Test-Path "external/site-adapters")) {
         throw "Install the real policy adapter in external/site-adapters"
-    }
-    if (-not $env:RAN_GYM_NS3_DIR) {
-        throw "Set RAN_GYM_NS3_DIR to a Linux-compatible ns-O-RAN/ns-3 installation"
     }
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "--profile", "external",
         "up", "--build", "--exit-code-from", "ran-gym-active", "ran-gym-active")
