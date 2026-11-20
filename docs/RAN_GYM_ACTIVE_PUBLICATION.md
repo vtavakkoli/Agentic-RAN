@@ -40,6 +40,48 @@ The complete automated verification uses the full COMMAG dataset and may be
 expensive. Preparation caching is reused, while the cross-fitted publication
 benchmark is rerun.
 
+
+## Using the actual frozen COMMAG-trained Agentic-RAN controller
+
+For an ns-3/5G-LENA or other external Gym **whose action space really allows
+scheduler and physical PRB selection**, start from
+`configs/ran_gym_prb_compatible.example.json`, not the stock traffic-steering
+example. Copy it to `configs/ran_gym_active.json`.
+
+The built-in
+`agentic_ran.research_ran_gym_adapters:make_frozen_commag_agentic_policy`
+loads a **specific frozen cross-fit policy fold** from
+`results/publication/publication_models.joblib`, applies its calibrated
+SLA/uncertainty/OOD thresholds and switching margin, and calls the repository's
+actual `_policy_precompute` / `_choose_from_precomputed` logic.
+
+It requires TWO externally implemented, scientific mappings in
+`external/site-adapters/site_adapter.py`:
+
+- `commag_frame_from_physical_observation(obs, previous, t, info, config)`:
+  returns genuine per-slice rows with the **17 original COMMAG features**,
+  slice type, logged/current scheduler+PRB action, episode ID and timestamp.
+  Units, temporal aggregation and missing features must be reconciled with
+  physical telemetry; never fill unobserved state with invented constants.
+- `translate_scheduler_prb_to_executed_gym_action(selected_actions, frame,
+  obs, previous, t, info, config)`: returns the exact Gym action encoding the
+  three selected scheduler/PRB choices. Validate shared BWP PRB capacity
+  and actuation semantics. Avoid silently projecting invalid allocations;
+  report projection separately if the experiment defines one.
+
+The fixed `policy_fold` and `frozen_model_sha256` must be chosen before
+final-test simulations. Generate the checksum using:
+
+~~~powershell
+(Get-FileHash .\results\publication\publication_models.joblib -Algorithm SHA256).Hash.ToLower()
+~~~
+
+**This model inference path is implemented; the required external PHY/MAC
+observation/action mapping and real simulator have not been implemented by this
+repository.** No superiority result exists until these are independently
+installed, verified and executed. Avoid invoking the built-in COMMAG policy on
+the stock traffic-steering/energy-saving environments.
+
 ## Actual external ns-O-RAN Gym experiment
 
 1. Install a **Linux-compatible compiled ns-O-RAN/ns-3** under an accessible
