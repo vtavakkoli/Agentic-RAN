@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1.7
+# Standalone isolated research verification image; does not mutate the production image.
+FROM python:3.13-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /workspace
+COPY pyproject.toml README.md LICENSE ./
+COPY agentic_ran ./agentic_ran
+COPY tests ./tests
+COPY configs ./configs
+RUN python -m pip install --no-cache-dir ".[ran-gym,dev]"
+RUN mkdir -p /workspace/results /workspace/artifacts
+# External ns-o-ran-gym is optional because it requires the separately built ns-3 stack.
+FROM runtime AS nsoran
+RUN python -m pip install --no-cache-dir "nsoran>=0.1"
