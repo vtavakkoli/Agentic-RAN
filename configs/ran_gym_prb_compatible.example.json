@@ -1,0 +1,58 @@
+{
+  "schema": "agentic-ran-gym-benchmark-v1",
+  "backend": "custom-external-gym",
+  "environment_factory": "site_adapter:make_prb_gym_env",
+  "policies": {
+    "candidate": "agentic_ran.research_ran_gym_adapters:make_frozen_commag_agentic_policy",
+    "original": "site_adapter:make_frozen_original_agentic_baseline",
+    "fixed_prb": "site_adapter:make_fixed_scheduler_prb_baseline"
+  },
+  "scenarios": [
+    "normal_load",
+    "bursty_urlcc"
+  ],
+  "training_seeds": [
+    101,
+    102,
+    103,
+    104
+  ],
+  "validation_seeds": [
+    201,
+    202,
+    203,
+    204
+  ],
+  "test_seeds": [
+    501,
+    502,
+    503,
+    504,
+    505,
+    506,
+    507,
+    508,
+    509,
+    510,
+    511,
+    512,
+    513,
+    514,
+    515,
+    516,
+    517,
+    518,
+    519,
+    520
+  ],
+  "max_steps": 24,
+  "require_matched_initial_observation": true,
+  "require_applied_action_receipt": true,
+  "observation_action_mapping_documented": false,
+  "simulator_revision": "SET_THE_ACTUAL_NSGYM_SIMULATOR_REVISION",
+  "frozen_model_path": "/workspace/results/publication/publication_models.joblib",
+  "frozen_model_sha256": "REPLACE_WITH_ACTUAL_SHA256",
+  "policy_fold": "policy_exp1",
+  "observation_mapper": "site_adapter:commag_frame_from_physical_observation",
+  "action_mapper": "site_adapter:translate_scheduler_prb_to_executed_gym_action"
+}

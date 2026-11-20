@@ -1,0 +1,38 @@
+{
+  "schema": "agentic-ran-gym-benchmark-v1",
+  "backend": "toy-gym-smoke",
+  "environment_factory": "agentic_ran.research_ran_gym_adapters:make_toy_env",
+  "policies": {
+    "candidate": "agentic_ran.research_ran_gym_adapters:make_toy_queue_policy",
+    "noop": "agentic_ran.research_ran_gym_adapters:make_noop_policy",
+    "random": "agentic_ran.research_ran_gym_adapters:make_random_policy"
+  },
+  "scenarios": [
+    "normal",
+    "congested",
+    "weak_channel"
+  ],
+  "training_seeds": [
+    20,
+    21
+  ],
+  "validation_seeds": [
+    30,
+    31
+  ],
+  "test_seeds": [
+    2001,
+    2002,
+    2003,
+    2004,
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010
+  ],
+  "max_steps": 24,
+  "noop_action": 0,
+  "require_applied_action_receipt": true
+}
