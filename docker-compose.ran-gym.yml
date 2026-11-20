@@ -24,8 +24,24 @@ services:
     entrypoint: ["python", "-m", "agentic_ran.research_ran_gym"]
     command: ["--config", "/workspace/configs/ran_gym_smoke.json", "--output", "/workspace/results/ran-gym-smoke"]
 
-  # Requires a separately installed ns-O-RAN simulator, a trained compatible
-  # controller adapter, and a final user-provided configuration.
+  # Fully in-container upstream ns-O-RAN/ns-3 compilation and real Gym step.
+  # Stock TrafficSteering action space: native integration test ONLY.
+  ran-gym-nsoran-smoke:
+    profiles: ["native"]
+    <<: *base
+    build:
+      context: .
+      dockerfile: Dockerfile.ran-gym
+      target: nsoran
+      args:
+        NSORAN_BUILD_JOBS: "${NSORAN_BUILD_JOBS:-8}"
+    init: true
+    shm_size: "1gb"
+    entrypoint: ["timeout", "480s", "python", "-m", "agentic_ran.research_nsoran_container_smoke"]
+    command: ["--output", "/workspace/results/nsoran-native/native_gym_smoke.json", "--steps", "2"]
+
+  # Same in-container simulator, but this research gate requires a frozen
+  # compatible policy and validated state/action mapping. No host ns-3.
   ran-gym-active:
     profiles: ["external"]
     <<: *base
@@ -33,6 +49,10 @@ services:
       context: .
       dockerfile: Dockerfile.ran-gym
       target: nsoran
+      args:
+        NSORAN_BUILD_JOBS: "${NSORAN_BUILD_JOBS:-8}"
+    init: true
+    shm_size: "1gb"
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: "/workspace/site-adapters"
@@ -40,7 +60,6 @@ services:
       - ./results:/workspace/results
       - ./artifacts:/workspace/artifacts:ro
       - ./configs:/workspace/configs:ro
-      - ${RAN_GYM_NS3_DIR:-./external/ns3}:/opt/ns3
       - ./external/site-adapters:/workspace/site-adapters:ro
     entrypoint: ["python", "-m", "agentic_ran.research_ran_gym"]
     command: ["--config", "/workspace/configs/ran_gym_active.json", "--output", "/workspace/results/ran-gym-active"]
