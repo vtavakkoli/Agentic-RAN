@@ -9,9 +9,39 @@ COPY tests ./tests
 COPY configs ./configs
 RUN python -m pip install --no-cache-dir ".[ran-gym,dev]"
 RUN mkdir -p /workspace/results /workspace/artifacts
-# External ns-o-ran-gym is optional because it requires the separately built ns-3 stack.
+# Optional full ns-O-RAN simulator *inside this Docker image*.
+# The native simulator is large and built only when targeting "nsoran".
+# Source origins follow the official OpenRAN Gym ns-O-RAN install guide.
 FROM runtime AS nsoran
+USER root
+ARG NSORAN_BUILD_JOBS=8
+ARG NSORAN_E2SIM_SHA=951b3e9e99b47260f1525d2a95fa4b2f8065530e
+ARG NSORAN_NS3_SHA=0efbfaf370350c170beb249951e5c349d7f89b34
+ARG NSORAN_INTERFACE_SHA=cf1a4bce7b40b09a80abff05e7a30c113d36353b
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
+    && apt-get install -y --no-install-recommends \
+       git ca-certificates build-essential g++ cmake ninja-build pkg-config \
+       libsctp-dev lksctp-tools autoconf automake libtool bison flex \
+       libboost-all-dev libsqlite3-dev libgsl-dev libxml2-dev libgtk-3-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN python -m pip install --no-cache-dir "nsoran==0.0.2"
+RUN git clone https://github.com/wineslab/o-ran-e2sim.git /opt/e2sim \
+    && git -C /opt/e2sim checkout --detach "${NSORAN_E2SIM_SHA}"
+WORKDIR /opt/e2sim/e2sim/build
+RUN cmake .. -DDEV_PKG=1 -DLOG_LEVEL=2 \
+    && cmake --build . --parallel "${NSORAN_BUILD_JOBS}" \
+    && cpack -G DEB \
+    && dpkg -i ./e2sim-dev_1.0.0_*.deb \
+    && ldconfig
+RUN git clone https://github.com/wineslab/ns-o-ran-ns3-mmwave.git /opt/ns3-mmwave-oran \
+    && git -C /opt/ns3-mmwave-oran checkout --detach "${NSORAN_NS3_SHA}" \
+    && git clone https://github.com/o-ran-sc/sim-ns3-o-ran-e2.git /opt/ns3-mmwave-oran/contrib/oran-interface \
+    && git -C /opt/ns3-mmwave-oran/contrib/oran-interface checkout --detach "${NSORAN_INTERFACE_SHA}"
+WORKDIR /opt/ns3-mmwave-oran
+RUN ./ns3 configure --enable-examples --build-profile=optimized --out=build/optimized \
+    && ./ns3 build -j "${NSORAN_BUILD_JOBS}" \
+    && test -f .lock-ns3_linux_build \
+    && ln -s /opt/ns3-mmwave-oran /opt/ns3
+WORKDIR /workspace
+# Stock nsoran supports traffic steering/energy saving, not COMMAG PRB actuation.
+# The build is a native ns-O-RAN Gym smoke/integration test, not a publication result.
