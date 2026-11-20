@@ -101,7 +101,7 @@ def make_nsoran_traffic_steering(scenario: str, seed: int, config: dict[str, Any
     if not ns3_path.is_dir() or not scenario_file.is_file():
         raise FileNotFoundError("ns-O-RAN simulator and scenario configuration must be mounted")
     scenario_configuration = json.loads(scenario_file.read_text(encoding="utf-8"))
-    run_dir = Path(config.get("run_root", "/workspace/results/ran-gym-native")) / scenario / str(seed)
+    run_dir = Path(config.get("run_root", "/workspace/results/ran-gym-native")) / scenario / str(seed) / str(config.get("policy_label", "unknown-policy"))
     run_dir.mkdir(parents=True, exist_ok=True)
     return TrafficSteeringEnv(
         ns3_path=str(ns3_path),
