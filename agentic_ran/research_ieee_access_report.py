@@ -22,7 +22,9 @@ NS3_COMMIT = "418210e8914e9f6bcb5cddbcc94a2cecb7853b68"
 
 def read_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
+        # PowerShell 5.1 Set-Content -Encoding UTF8 emits a BOM. Accept both
+        # UTF-8 with BOM and UTF-8 without BOM (PowerShell 7/Python output).
+        obj = json.loads(path.read_text(encoding="utf-8-sig"))
         if not isinstance(obj, dict):
             raise ValueError("root must be an object")
         return obj, None
