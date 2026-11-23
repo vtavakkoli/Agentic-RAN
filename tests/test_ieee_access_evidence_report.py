@@ -114,3 +114,33 @@ def test_smoke_only_never_claims_research_package_even_if_all_commands_pass(tmp_
     result = inspect_campaign(data, tmp_path)
     assert result["smoke"] is True
     assert result["passed"] is False  # no genuine hash-proven evidence
+
+def test_manifest_with_windows_powershell_51_utf8_bom(tmp_path: Path):
+    """PowerShell 5.1 writes BOM with Set-Content -Encoding UTF8 in CLM."""
+    from agentic_ran.research_ieee_access_report import read_json
+
+    manifest = {"run_id": "ieee-access-bom", "stages": {
+        "constrained_language_manifest_smoke": {"status": "passed"}
+    }}
+    path = tmp_path / "run_manifest.json"
+    path.write_text("\ufeff" + json.dumps(manifest), encoding="utf-8")
+    loaded, error = read_json(path)
+    assert error is None
+    assert loaded == manifest
+
+
+def test_powershell_orchestrator_uses_only_core_manifest_apis():
+    """Regression guard for the two Constrained Language Mode failures."""
+    script = Path(__file__).resolve().parents[1] / "scripts" / "run_ieee_access_complete.ps1"
+    if not script.exists():
+        # The wheel build may install only the Python package.
+        return
+    source = script.read_text(encoding="utf-8")
+    assert "$stages = @{}" in source
+    assert "if ($null -ne $stages[$Stage])" in source
+    assert "Set-Content -LiteralPath" in source
+    assert "ConvertTo-Json -Depth 24" in source
+    assert "New-Object System.Text.UTF8Encoding" not in source
+    assert "[System.IO.File]::WriteAllText" not in source
+    assert "$stages.Contains(" not in source
+    assert "[switch]$SelfTest" in source

@@ -28,6 +28,7 @@ param(
     [switch]$SkipOffline,
     [switch]$SkipNative,
     [switch]$ExternalPhysical,
+    [switch]$SelfTest,
     [string]$RunId = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -81,7 +82,9 @@ if ($null -ne $hostId -and [string]::IsNullOrWhiteSpace($env:LOCAL_UID) -and
 $manifestPath = Join-Path $runRoot 'run_manifest.json'
 $failureMessage = $null
 $runStarted = (Get-Date).ToUniversalTime().ToString('o')
-$stages = [ordered]@{}
+# Hashtable is a PowerShell Constrained Language Mode core type; ordered
+# dictionaries are not and their .Contains() method fails under WDAC/AppLocker.
+$stages = @{}
 $includeOffline = -not $SkipOffline
 $includeNative = -not $SkipNative
 
@@ -119,16 +122,16 @@ function Save-RunManifest {
         stages = $stages
         failure = $failureMessage
     }
-    # A JSON manifest is used by the report compiler and guards against mixing
-    # evidence from earlier experiments.
-    # PowerShell 5.1 Set-Content -Encoding UTF8 adds a BOM, which Python
-    # json.loads(utf-8) rejects. Write explicitly without BOM on Windows/Linux.
-    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText((Join-Path $root $manifestPath),
-        ($manifest | ConvertTo-Json -Depth 24), $utf8NoBom)
+    # Use native PowerShell cmdlets: corporate WDAC/AppLocker Constrained
+    # Language Mode blocks New-Object UTF8Encoding and System.IO.File calls.
+    # Windows PowerShell 5.1 writes UTF-8 with a BOM; the Python report
+    # deliberately reads JSON as utf-8-sig to handle 5.1 and PowerShell 7.
+    $manifest | ConvertTo-Json -Depth 24 |
+        Set-Content -LiteralPath (Join-Path $root $manifestPath) -Encoding UTF8
 }
 function Invoke-Stage([string]$Stage, [scriptblock]$Body) {
-    if ($stages.Contains($Stage)) { throw "Duplicate experiment stage: $Stage" }
+    # Avoid .Contains() on a non-core OrderedDictionary in constrained mode.
+    if ($null -ne $stages[$Stage]) { throw "Duplicate experiment stage: $Stage" }
     $stages[$Stage] = [ordered]@{ status = 'running'; started_utc = (Get-Date).ToUniversalTime().ToString('o') }
     Save-RunManifest
     try {
@@ -142,6 +145,21 @@ function Invoke-Stage([string]$Stage, [scriptblock]$Body) {
         $stages[$Stage]['completed_utc'] = (Get-Date).ToUniversalTime().ToString('o')
         Save-RunManifest
     }
+}
+
+# Exercise stage registration and BOM-compatible manifest serialization without
+# Docker. Intended for restricted-corporate PowerShell regression tests.
+if ($SelfTest) {
+    Invoke-Stage 'constrained_language_manifest_smoke' {
+        Write-Host ("PowerShell language mode: " + $ExecutionContext.SessionState.LanguageMode)
+    }
+    $check = Get-Content -LiteralPath (Join-Path $root $manifestPath) -Raw |
+        ConvertFrom-Json
+    if ($check.stages.constrained_language_manifest_smoke.status -ne 'passed') {
+        throw 'Manifest smoke test failed to record a passed stage.'
+    }
+    Write-Host 'Constrained-language manifest self-test passed.'
+    return
 }
 
 $env:RAN_GYM_TRAINING_RUNS = [string]$TrainingRuns

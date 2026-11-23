@@ -6,6 +6,36 @@
 > to this UDP example. The workflow is designed to expose that limitation,
 > not to hide it or manufacture 5G NR performance.
 
+## Corporate Windows PowerShell / Constrained Language Mode
+
+Some managed Windows devices enforce **ConstrainedLanguage** through WDAC
+or AppLocker. `-ExecutionPolicy Bypass` does **not** disable that policy.
+This orchestration script supports restricted environments without
+`New-Object System.Text.UTF8Encoding` or direct `System.IO.File` method
+calls, and avoids invoking `.Contains()` on a non-core ordered dictionary.
+
+Before launching a long research campaign, verify stage registration and
+manifest writing locally **without running Docker**:
+
+```powershell
+$ExecutionContext.SessionState.LanguageMode
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_ieee_access_complete.ps1 `
+  -Preset smoke -SkipOffline -SkipNative -SelfTest
+```
+
+A successful self-test prints `Constrained-language manifest self-test passed.`
+and stores a `run_manifest.json` file under a unique
+`results/ieee-access-*/` directory.
+
+PowerShell 5.1's `Set-Content -Encoding UTF8` writes a UTF-8 byte-order
+mark. The research report parser intentionally uses `utf-8-sig` and
+supports either BOM form; it does not rely on forbidden constructor calls.
+
+If a later research stage fails, inspect `run_manifest.json` for its
+`stages` and `failure` records. The final report is best effort and
+**never** transforms a failed training or simulation stage into scientific
+evidence.
+
 ## Prerequisites
 
 - `Agentic-RAN` working copy; Docker Engine/Desktop with Linux containers;
