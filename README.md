@@ -109,6 +109,27 @@ flowchart LR
     O --> P[Rollback / audit / drift]
 ```
 
+## IEEE Access reproducible research campaign
+
+The dedicated [end-to-end research workflow](docs/IEEE_ACCESS_END_TO_END.md) runs
+Docker-based **training, validation, held-out testing, full COMMAG offline
+evaluation, PULSE shadow replay, and real ns-3.49 UDP integration**, then
+produces an HTML/Markdown scientific audit, paired-comparison tables, a
+publication figure, and machine-readable evidence checksums.
+
+**Windows PowerShell:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_ieee_access_complete.ps1 -Preset research
+```
+
+For a quick **functional-only** smoke test (not IEEE Access performance
+evidence), add `-Preset smoke -SkipOffline -SkipNative`.
+
+The full workflow **does not** present toy rewards or UDP packets as observed
+NR PRB/scheduler interventions. Manuscript readiness remains subject to a
+separately validated real NR simulator, novelty and independent author review.
+
 ## Verified native ns-3 Gymnasium integration
 
 **Real C++ simulation, not an interface-only mock.** A dedicated Docker target builds the official **ns-3.49** release (`418210e8914e9f6bcb5cddbcc94a2cecb7853b68`) and the independently verified [vtavakkoli/ns3-gym](https://github.com/vtavakkoli/ns3-gym) bridge (pinned commit `21e68565a6beaf13589fd19778b5332f4d0b29e0`).

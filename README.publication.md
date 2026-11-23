@@ -1,36 +1,28 @@
 # Publication benchmark quick start
 
-## Native ns-O-RAN Gym in Docker (optional)
+## Complete IEEE Access Docker experiment and report
 
-The `nsoran` image stage downloads and compiles **e2sim, ns3-mmwave
-and O-RAN E2** inside the container. No Windows ns-3 installation or
-mounted simulator binaries are required:
+The supported comprehensive research workflow is
+[docs/IEEE_ACCESS_END_TO_END.md](docs/IEEE_ACCESS_END_TO_END.md).
 
 ```powershell
-$env:NSORAN_BUILD_JOBS = "8"
-docker compose -f docker-compose.ran-gym.yml --profile native up --build --exit-code-from ran-gym-nsoran-smoke ran-gym-nsoran-smoke
+powershell -ExecutionPolicy Bypass -File .\scripts\run_ieee_access_complete.ps1 -Preset research
 ```
 
-This runs a **stock traffic-steering Gym smoke**, not the frozen
-COMMAG scheduler/PRB controller; it must **not** be used as evidence
-of Agentic-RAN's active superiority. The Docker source build is not
-part of standard CI, so it requires first-run validation. See
-[Docker native ns-O-RAN instructions](docs/DOCKER_NSORAN.md) and
-[active evaluation methodology](docs/RAN_GYM_ACTIVE_PUBLICATION.md).
+It trains/tests independent toy policies, reruns the full offline COMMAG
+benchmark, checks the **real compiled ns-3.49 UDP** integration, and writes a
+run-scoped HTML and Markdown evidence audit with hashes and recorded gaps.
+The old Waf-based wineslab ns-O-RAN Docker runtime has been retired.
 
+**Important:** verified UDP communication is not an NR/PRB scheduler result.
+Even a passing full research campaign is not automatically IEEE Access
+submission-ready without compatible physical NR actuation and author review.
 
-The final publication workflow runs on the normal `python:3.13-slim` image and keeps the original COMMAG PPO as a literature reference only.
-
-Run the complete workflow:
+The existing publication-only runner remains available:
 
 ```bash
-docker compose -f docker-compose.publication.yml up --build --force-recreate publication-test
-```
-
-Dependency chain:
-
-```text
-prepare-full-commag -> publication-test
+docker compose -f docker-compose.publication.yml up --build \
+  --force-recreate --exit-code-from publication-test publication-test
 ```
 
 ## 2026 research methods: conformal re-ranking and model-predictive control
