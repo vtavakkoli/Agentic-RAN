@@ -49,7 +49,7 @@ services:
       - --data
       - /workspace/data/prepared/commag-publication/commag_publication_transitions.csv.gz
       - --output
-      - /workspace/results/publication
+      - ${AGENTIC_RAN_PUBLICATION_OUTPUT:-/workspace/results/publication}
       - --config
       - /workspace/configs/full_commag_publication.yaml
       - --science-config
@@ -67,4 +67,4 @@ services:
       - --data
       - /workspace/data/prepared/commag-publication/commag_publication_transitions.csv.gz
       - --output
-      - /workspace/results/pulse-commag
+      - ${AGENTIC_RAN_PULSE_OUTPUT:-/workspace/results/pulse-commag}
