@@ -1,12 +1,10 @@
-"""Adapters for RAN Gym benchmark: explicit toy smoke and ns-O-RAN TS.
+"""Research Gymnasium adapters: explicit synthetic tests and strict native boundaries.
 
-The ns-O-RAN TrafficSteeringEnv acts on handovers, not COMMAG scheduler/PRB.
-A frozen Agentic-RAN controller MUST NOT be relabeled as a TS controller
-without a separately documented and validated observation/action mapping.
+The verified ns-3.49 UDP backend is a separate module and must never be
+misrepresented as a COMMAG PRB/scheduler or O-RAN traffic-steering backend.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -86,63 +84,13 @@ def make_random_policy(config: dict[str, Any], action_space: Any) -> Any:
     return lambda observation, previous, step, info: int(rng.integers(action_space.n)) + int(action_space.start)
 
 
-def nsoran_build_status_path(ns3_path: Path | str, *, optimized: bool = True) -> Path:
-    """Build metadata expected by upstream nsoran for Waf versus CMake ns-3."""
-    import sys
-
-    simulator_root = Path(ns3_path)
-    if (simulator_root / "ns3").is_file():
-        return simulator_root / f".lock-ns3_{sys.platform}_build"
-    return simulator_root / (
-        "build/optimized/build-status.py" if optimized else "build/build-status.py"
-    )
-
-
 def make_nsoran_traffic_steering(scenario: str, seed: int, config: dict[str, Any]) -> Any:
-    """Construct actual ns-o-ran-gym TrafficSteeringEnv with external ns-3.
-
-    This does not translate the COMMAG PRB/scheduler policy. Supply a separate
-    validated policy factory and action mapping to use it scientifically.
-    """
-    if scenario != "scenario-one":
-        raise ValueError("stock ns-O-RAN TS environment supports scenario-one only")
-    from environments.ts_env import TrafficSteeringEnv
-
-    ns3_path = Path(config["ns3_path"])
-    scenario_file = Path(config["scenario_configuration"])
-    if not ns3_path.is_dir() or not scenario_file.is_file():
-        raise FileNotFoundError("ns-O-RAN simulator and scenario configuration must be mounted")
-    scenario_configuration = json.loads(scenario_file.read_text(encoding="utf-8"))
-    # Gymnasium's reset(seed=...) does not pass ns-3 RngRun to upstream
-    # by default. Bind each matched seed to its simulator disturbance stream.
-    scenario_configuration["RngRun"] = [int(seed)]
-    run_dir = Path(config.get("run_root", "/workspace/results/ran-gym-native")) / scenario / str(seed) / str(config.get("policy_label", "unknown-policy"))
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    class PrebuiltTrafficSteeringEnv(TrafficSteeringEnv):
-        def configure_and_build_ns3(self) -> None:
-            if not bool(config.get("skip_ns3_rebuild", True)):
-                return super().configure_and_build_ns3()
-            # Compiled during Docker build. Avoid rebuilding the whole
-            # simulator for each independently seeded policy episode.
-            # The pinned ns-O-RAN tree is Waf-based; modern ns-3 is CMake.
-            # NsOranEnv itself loads this Waf-generated Python module to
-            # resolve the compiled scenario-one executable.
-            build_marker = nsoran_build_status_path(
-                self.ns3_path, optimized=self.optimized
-            )
-            if not build_marker.is_file():
-                raise FileNotFoundError(
-                    f"prebuilt ns-O-RAN status missing: {build_marker}; "
-                    "rebuild Docker target nsoran with the pinned Waf toolchain"
-                )
-
-    return PrebuiltTrafficSteeringEnv(
-        ns3_path=str(ns3_path),
-        scenario_configuration=scenario_configuration,
-        output_folder=str(run_dir),
-        optimized=bool(config.get("optimized", True)),
-        verbose=False,
+    """Legacy Waf/ns-O-RAN fork removed; fail explicitly rather than falling back."""
+    raise NotImplementedError(
+        "Legacy wineslab/ns-O-RAN Gym is no longer a supported runtime dependency. "
+        "Use the independently verified ns-3.49 UDP integration for UDP actions, "
+        "or provide a separately validated NR PRB/scheduler simulator. "
+        "No silent traffic-steering-to-PRB mapping exists."
     )
 
 
@@ -174,10 +122,12 @@ def make_frozen_commag_agentic_policy(config: dict[str, Any], action_space: Any)
     )
     from agentic_ran.research_ran_gym import load_factory
 
-    if config.get("environment_factory", "").endswith(":make_nsoran_traffic_steering"):
+    if config.get("environment_factory", "").endswith((
+        ":make_nsoran_traffic_steering", ":make_verified_ns3_udp_env"
+    )):
         raise ValueError(
             "COMMAG-trained Agentic-RAN scheduler/PRB policy cannot control "
-            "stock ns-O-RAN traffic steering handover action space"
+            "legacy handover or generic ns-3 UDP packet-count action space"
         )
     model_path = Path(config["frozen_model_path"])
     fold_name = str(config.get("policy_fold", ""))
