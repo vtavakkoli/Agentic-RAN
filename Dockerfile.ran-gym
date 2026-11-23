@@ -51,6 +51,14 @@ RUN git clone https://github.com/wineslab/ns-o-ran-ns3-mmwave.git /opt/ns3-mmwav
     && git clone https://github.com/o-ran-sc/sim-ns3-o-ran-e2.git /opt/ns3-mmwave-oran/contrib/oran-interface \
     && git -C /opt/ns3-mmwave-oran/contrib/oran-interface checkout --detach "${NSORAN_INTERFACE_SHA}"
 WORKDIR /opt/ns3-mmwave-oran
+# GCC 12 detects potentially freed ref-counted callback pointers in the
+# legacy upstream ns3-core optimized build. The pinned ns3 Waf wscript
+# appends CXXFLAGS_EXTRA *after* its own flags, so retain the diagnostic
+# but do not escalate this specific warning to an error. Do not disable
+# -Werror globally or suppress -Wuse-after-free entirely.
+# This is compilation compatibility, NOT proof that the source is safe.
+ARG NSORAN_WAF_CXXFLAGS_EXTRA="-Wno-error=use-after-free"
+ENV CXXFLAGS_EXTRA="${NSORAN_WAF_CXXFLAGS_EXTRA}"
 # The pinned ns-O-RAN fork is ns-3.35-era and ships ./waf, NOT ./ns3.
 # Its nsoran Python wrapper discovers scenario-one via build/optimized/build-status.py.
 # Do not pass --disable-werror here: it is not registered in the pinned wscript.
