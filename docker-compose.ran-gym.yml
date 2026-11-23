@@ -53,6 +53,56 @@ services:
     entrypoint: ["python", "-m", "agentic_ran.research_ran_gym_final_algorithms"]
     command: ["--output", "/workspace/results/ran-gym-final-algorithms", "--seed", "2026", "--ppo-updates", "20", "--episodes-per-update", "8", "--logged-episodes", "72", "--validation-episodes", "12", "--test-seeds", "20", "--steps", "24", "--wsp-rounds", "2", "--critic-iterations", "3"]
 
+  # Research-scale independent training seeds and paired scenario tests.
+  # Runs in Python 3.13 CPU PyTorch; strictly TOY Gymnasium, not NR PHY.
+  ran-gym-campaign:
+    <<: *base
+    build:
+      context: .
+      dockerfile: Dockerfile.ran-gym
+      target: final-algorithms
+    entrypoint: ["python", "-m", "agentic_ran.research_ran_gym_campaign"]
+    command:
+      - --output
+      - /workspace/results/${RAN_GYM_CAMPAIGN_NAME:-ran-gym-campaign}
+      - --training-runs
+      - "${RAN_GYM_TRAINING_RUNS:-10}"
+      - --test-seeds
+      - "${RAN_GYM_TEST_SEEDS:-40}"
+      - --ppo-updates
+      - "${RAN_GYM_PPO_UPDATES:-48}"
+      - --episodes-per-update
+      - "${RAN_GYM_PPO_EPISODES_PER_UPDATE:-12}"
+      - --logged-episodes
+      - "${RAN_GYM_LOGGED_EPISODES:-120}"
+      - --validation-episodes
+      - "${RAN_GYM_VALIDATION_EPISODES:-24}"
+      - --steps
+      - "${RAN_GYM_STEPS:-32}"
+      - --wsp-rounds
+      - "${RAN_GYM_WSP_ROUNDS:-3}"
+      - --critic-iterations
+      - "${RAN_GYM_CRITIC_ITERATIONS:-5}"
+
+  # Small repeatable Docker CI smoke; not evidence for IEEE Access claims.
+  ran-gym-campaign-smoke:
+    <<: *base
+    build:
+      context: .
+      dockerfile: Dockerfile.ran-gym
+      target: final-algorithms
+    entrypoint: ["python", "-m", "agentic_ran.research_ran_gym_campaign"]
+    command: ["--output", "/workspace/results/${RAN_GYM_SMOKE_NAME:-ran-gym-campaign-smoke}", "--training-runs", "2", "--test-seeds", "4", "--ppo-updates", "1", "--episodes-per-update", "2", "--logged-episodes", "12", "--validation-episodes", "4", "--steps", "5", "--wsp-rounds", "1", "--critic-iterations", "1", "--smoke"]
+
+  ran-gym-campaign-test:
+    <<: *base
+    build:
+      context: .
+      dockerfile: Dockerfile.ran-gym
+      target: final-algorithms
+    entrypoint: ["python", "-m", "pytest"]
+    command: ["-q", "tests/test_ran_gym_campaign.py"]
+
   # Fully in-container upstream ns-O-RAN/ns-3 compilation and real Gym step.
   # Stock TrafficSteering action space: native integration test ONLY.
   ran-gym-nsoran-smoke:
