@@ -86,6 +86,18 @@ def make_random_policy(config: dict[str, Any], action_space: Any) -> Any:
     return lambda observation, previous, step, info: int(rng.integers(action_space.n)) + int(action_space.start)
 
 
+def nsoran_build_status_path(ns3_path: Path | str, *, optimized: bool = True) -> Path:
+    """Build metadata expected by upstream nsoran for Waf versus CMake ns-3."""
+    import sys
+
+    simulator_root = Path(ns3_path)
+    if (simulator_root / "ns3").is_file():
+        return simulator_root / f".lock-ns3_{sys.platform}_build"
+    return simulator_root / (
+        "build/optimized/build-status.py" if optimized else "build/build-status.py"
+    )
+
+
 def make_nsoran_traffic_steering(scenario: str, seed: int, config: dict[str, Any]) -> Any:
     """Construct actual ns-o-ran-gym TrafficSteeringEnv with external ns-3.
 
@@ -111,13 +123,18 @@ def make_nsoran_traffic_steering(scenario: str, seed: int, config: dict[str, Any
         def configure_and_build_ns3(self) -> None:
             if not bool(config.get("skip_ns3_rebuild", True)):
                 return super().configure_and_build_ns3()
-            # Compiled during Docker build. Avoid recompiling the entire
-            # ns-3 simulator for *every* policy and held-out episode.
-            build_marker = Path(self.ns3_path) / ".lock-ns3_linux_build"
+            # Compiled during Docker build. Avoid rebuilding the whole
+            # simulator for each independently seeded policy episode.
+            # The pinned ns-O-RAN tree is Waf-based; modern ns-3 is CMake.
+            # NsOranEnv itself loads this Waf-generated Python module to
+            # resolve the compiled scenario-one executable.
+            build_marker = nsoran_build_status_path(
+                self.ns3_path, optimized=self.optimized
+            )
             if not build_marker.is_file():
                 raise FileNotFoundError(
-                    f"ns-3 build marker missing at {build_marker}; "
-                    "run Docker build with the nsoran stage"
+                    f"prebuilt ns-O-RAN status missing: {build_marker}; "
+                    "rebuild Docker target nsoran with the pinned Waf toolchain"
                 )
 
     return PrebuiltTrafficSteeringEnv(

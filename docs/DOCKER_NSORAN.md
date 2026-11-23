@@ -11,7 +11,7 @@ docker compose -f docker-compose.ran-gym.yml --profile native up --build --exit-
 ~~~
 
 This invokes the `nsoran` Docker build target with:
-- Python 3.12, Agentic-RAN, Gymnasium and upstream `nsoran==0.0.2`
+- Python 3.11 (legacy native build stage only), Agentic-RAN, Gymnasium and upstream `nsoran==0.0.2`
 - e2sim from pinned `wineslab/o-ran-e2sim` commit
 - pinned ns3-mmwave O-RAN release and pinned O-RAN E2 interface
 - native compiled `scenario-one` traffic-steering environment
@@ -19,6 +19,62 @@ This invokes the `nsoran` Docker build target with:
 
 Success should create:
 `results/nsoran-native/native_gym_smoke.json`.
+
+## Fixed: pinned simulator is Waf-based, not CMake/ns3
+
+The pinned `wineslab/ns-o-ran-ns3-mmwave` revision
+`0efbfaf370350c170beb249951e5c349d7f89b34` has a root `waf`
+launcher and `wscript`, but **no** `ns3` launcher. Consequently
+`./ns3 configure` fails with exit code **127** (command not found).
+It must instead be built with the legacy Waf toolchain:
+
+~~~bash
+cd /opt/ns3-mmwave-oran
+python3 ./waf configure --enable-examples --build-profile=optimized --out=build/optimized
+python3 ./waf build -j 4
+test -s build/optimized/build-status.py
+grep -q 'scenario-one' build/optimized/build-status.py
+~~~
+
+The upstream `nsoran` Python wrapper loads this Waf-generated
+`build/optimized/build-status.py` to locate the `scenario-one`
+executable. The newer ns-3 CMake `.lock-ns3_linux_build` is not
+the correct marker for this pinned revision. Neither the pinned
+`wscript` nor its documented configuration explicitly provides
+`--disable-werror`, so the Docker build omits that flag.
+
+The **Python 3.11 / Debian Bullseye** base is deliberate for this
+legacy simulator. Other project stages (ordinary RAN Gym, PPO/WSP,
+and Python CI) still use Python 3.13. Do not unconditionally replace
+every `FROM` with Python 3.13; that could introduce unrelated Waf,
+compiler and dependency incompatibilities.
+
+For Windows PowerShell (Docker Desktop Linux containers):
+
+~~~powershell
+git switch main
+git pull --ff-only origin main
+$env:NSORAN_BUILD_JOBS = "4"
+docker compose -f docker-compose.ran-gym.yml --profile native build --progress=plain ran-gym-nsoran-smoke
+if ($LASTEXITCODE -ne 0) { throw "Native build failed; inspect first actual compile error" }
+docker compose -f docker-compose.ran-gym.yml --profile native run --rm ran-gym-nsoran-smoke
+if ($LASTEXITCODE -ne 0) { throw "Native Gym execution failed" }
+~~~
+
+**Corporate proxy / private root CAs:** If your local
+`Dockerfile.ran-gym` adds `COPY gateway.crt` and `COPY root.crt`,
+keep those certificates **local**, outside git, and preserve your
+trust-store modifications when applying the upstream Dockerfile fix.
+Uncommitted local Dockerfile edits may conflict with `git pull`;
+save the local file first and reapply only your local CA setup after
+updating the repository. Do not commit or upload confidential
+certificate material. This patch does not require changing any CA files.
+
+**Verification boundary:** GitHub CI exercises the Waf/CMake
+marker-selection tests but does **not** compile ns-3. An actual
+native Docker build and `TrafficSteeringEnv.reset/step` are
+only verified after the commands above succeed. This remains
+handover/traffic-steering, *not* COMMAG PRB/scheduler execution.
 
 **Build note:** The native C++ ns-O-RAN stack is old and complex and its Docker
 build is not run in the standard GitHub CI because of resource requirements.
