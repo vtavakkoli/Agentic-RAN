@@ -116,7 +116,7 @@ services:
         MODERN_NS3_BUILD_JOBS: "${MODERN_NS3_BUILD_JOBS:-4}"
     init: true
     entrypoint: ["python3.13", "-m", "agentic_ran.research_modern_ns3_container_smoke"]
-    command: ["--output", "/workspace/results/modern-ns3/real_closed_loop.json", "--horizon", "5"]
+    command: ["--output", "${AGENTIC_RAN_NATIVE_REPORT_PATH:-/workspace/results/modern-ns3/real_closed_loop.json}", "--horizon", "5"]
 
   # External site adapters remain opt-in for a separately validated COMMAG
   # PRB/scheduler use case. The verified generic UDP example must NOT be
