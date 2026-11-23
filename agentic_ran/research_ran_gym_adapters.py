@@ -111,13 +111,25 @@ def make_nsoran_traffic_steering(scenario: str, seed: int, config: dict[str, Any
         def configure_and_build_ns3(self) -> None:
             if not bool(config.get("skip_ns3_rebuild", True)):
                 return super().configure_and_build_ns3()
-            # Compiled during Docker build. Avoid recompiling the entire
-            # ns-3 simulator for *every* policy and held-out episode.
-            build_marker = Path(self.ns3_path) / ".lock-ns3_linux_build"
+            # Compiled during Docker build. Avoid rebuilding the whole
+            # simulator for each independently seeded policy episode.
+            # The pinned ns-O-RAN tree is Waf-based; modern ns-3 is CMake.
+            import sys
+
+            simulator_root = Path(self.ns3_path)
+            if (simulator_root / "ns3").is_file():
+                build_marker = simulator_root / f".lock-ns3_{sys.platform}_build"
+            else:
+                # NsOranEnv itself loads this Waf-generated Python module to
+                # resolve the compiled scenario-one executable.
+                build_marker = simulator_root / (
+                    "build/optimized/build-status.py"
+                    if self.optimized else "build/build-status.py"
+                )
             if not build_marker.is_file():
                 raise FileNotFoundError(
-                    f"ns-3 build marker missing at {build_marker}; "
-                    "run Docker build with the nsoran stage"
+                    f"prebuilt ns-O-RAN status missing: {build_marker}; "
+                    "rebuild Docker target nsoran with the pinned Waf toolchain"
                 )
 
     return PrebuiltTrafficSteeringEnv(
