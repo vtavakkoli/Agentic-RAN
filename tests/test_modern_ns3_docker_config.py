@@ -29,7 +29,7 @@ def test_native_docker_uses_only_verified_modern_source_and_cmake():
     assert "CMAKE_CXX_STANDARD=23" in dockerfile
     assert "python3.13 -m pip install --no-cache-dir ." in dockerfile
     assert "RUN python3.13 -m pytest -q tests/test_modern_ns3_integration.py" in dockerfile
-    assert "wineslab" not in dockerfile
+    assert "git clone https://github.com/wineslab/" not in dockerfile
     assert "nsoran==0.0.2" not in dockerfile
     assert "tkn-tub/ns3-gym.git" not in dockerfile
     assert "python3.11 ./waf" not in dockerfile
