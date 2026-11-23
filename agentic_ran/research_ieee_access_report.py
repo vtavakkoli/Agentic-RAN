@@ -261,7 +261,8 @@ def produce(run_root: Path, out: Path, manifest_path: Path | None = None) -> dic
     physical_required = flags.get("include_physical", False)
     physical_pass = bool(isinstance(physical_gate, dict) and physical_gate.get("gate_passed") is True)
     all_stages_success = bool(stage_states) and all(x.get("status") == "passed" for x in stage_states.values())
-    package_complete = (campaign["passed"] and (not offline_required or offline["passed"]) and
+    package_complete = (campaign["passed"] and not campaign.get("smoke", True)
+                        and (not offline_required or offline["passed"]) and
                         (not native_required or native["passed"]) and all_stages_success and
                         manifest_err is None)
     # No automatic acceptance; physical evidence and independent scholarly review remain necessary.
@@ -275,7 +276,10 @@ def produce(run_root: Path, out: Path, manifest_path: Path | None = None) -> dic
         "independent_reviewer_and_novelty_assessment": False,
     }
     conclusion = ("DATASET_AND_EXPERIMENT_PACKAGE_COMPLETE; NR_PHYSICAL_GATE_PENDING"
-                  if package_complete else "INCOMPLETE_OR_INVALID_EVIDENCE")
+                  if package_complete else
+                  "FUNCTIONAL_SMOKE_ONLY; NOT MANUSCRIPT EVIDENCE"
+                  if campaign["passed"] and campaign.get("smoke") is True else
+                  "INCOMPLETE_OR_INVALID_EVIDENCE")
     meta = {
         "schema": "agentic-ran-ieee-access-audit-v1",
         "generated_utc": datetime.now(timezone.utc).isoformat(),
