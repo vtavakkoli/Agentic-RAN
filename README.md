@@ -449,7 +449,7 @@ before describing controller gains in a manuscript.
 ## Research-scale multi-training-seed RAN Gym experiment
 
 For the most comprehensive **compatible-action** Gymnasium train/validate/test
-campaign (5 independent training seeds, 40 held-out test seeds per training
+campaign (10 independent training seeds, 40 held-out test seeds per training
 run, six controllers and four traffic/channel scenarios) use:
 
 ```powershell
