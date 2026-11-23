@@ -75,6 +75,53 @@ docker compose -f docker-compose.ran-gym.yml --profile native run --rm ran-gym-n
 if ($LASTEXITCODE -ne 0) { throw "Native Gym execution failed" }
 ```
 
+## GCC 12 optimized C++ build: use-after-free warning escalation
+
+After the compatible Python 3.11 Waf interpreter fixed the missing
+`pipes` import, a real Windows Docker native build progressed into
+`ns3-core` C++ compilation, but failed with:
+
+```text
+src/core/model/simple-ref-count.h:108:5: error: pointer may be used after 'operator delete(void*)' [-Werror=use-after-free]
+src/core/model/simple-ref-count.h:118:5: error: pointer used after 'operator delete(void*)' [-Werror=use-after-free]
+cc1plus: all warnings being treated as errors
+```
+
+This is GCC 12's stricter `-Wuse-after-free` diagnostic in
+an optimized compilation of the legacy ref-counted callback implementation;
+the log does not establish whether the diagnostic is a false positive.
+The upstream pinned `wscript` supports a dedicated `CXXFLAGS_EXTRA`
+environment variable (appended after the Waf build-profile flags).
+The native Docker image uses:
+
+```dockerfile
+ARG NSORAN_WAF_CXXFLAGS_EXTRA="-Wno-error=use-after-free"
+ENV CXXFLAGS_EXTRA="${NSORAN_WAF_CXXFLAGS_EXTRA}"
+```
+
+**Meaning:** Continue emitting `-Wuse-after-free` as a **warning**
+instead of aborting on `-Werror=use-after-free`, while preserving
+compiler diagnostics and `-Werror` for other categories. This
+does not fix a possible memory lifetime defect. Treat this compatibility
+flag as a documented experimental limitation; review the callback
+implementation and consider sanitizer-enabled validation before making
+safety or real-network reliability claims.
+
+The default is build-arg configurable, for example:
+
+```powershell
+$env:NSORAN_BUILD_JOBS = "4"
+docker compose --progress plain -f docker-compose.ran-gym.yml --profile native build --pull ran-gym-nsoran-smoke
+if ($LASTEXITCODE -ne 0) { throw "Native ns-3 build failed" }
+docker compose -f docker-compose.ran-gym.yml --profile native run --no-build --rm ran-gym-nsoran-smoke
+if ($LASTEXITCODE -ne 0) { throw "Native Gym step failed" }
+```
+
+Avoid adding `--disable-werror` to the pinned Waf CLI (not supported)
+or using `-w` (hides all warnings). A successful source compile and
+a real Gym `reset/step` remain to be verified; normal CI only tests
+the source-level Docker configuration.
+
 ## Python 3.13's missing `pipes` module (Waf fix)
 
 The pinned ns-O-RAN Waf tool (`waf 2.0.21`) is an older Python program.

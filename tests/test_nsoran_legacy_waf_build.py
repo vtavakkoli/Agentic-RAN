@@ -39,6 +39,12 @@ def test_native_dockerfile_uses_pinned_waf_and_rejects_old_ns3_launcher():
     )[0]
     assert "bullseye-security" not in native
     assert "apt-get -o Acquire::Retries=3 update" in native
+    # Waf's pinned wscript appends CXXFLAGS_EXTRA after the flags from
+    # its own build profile. Do not globally disable -Werror here.
+    assert 'ARG NSORAN_WAF_CXXFLAGS_EXTRA="-Wno-error=use-after-free"' in native
+    assert 'ENV CXXFLAGS_EXTRA="${NSORAN_WAF_CXXFLAGS_EXTRA}"' in native
+    assert "--disable-werror" not in native.split("RUN test -f ./waf", 1)[1].split("WORKDIR /workspace", 1)[0]
+    assert "-Wno-use-after-free" not in native
     assert "python3.11 python3.11-dev python3-distutils" in native
     assert "/usr/bin/python3.11 -c 'import pipes'" in native
     assert "/usr/bin/python3.11 ./waf configure --enable-examples" in native
