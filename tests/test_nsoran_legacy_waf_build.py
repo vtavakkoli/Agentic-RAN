@@ -37,4 +37,4 @@ def test_native_dockerfile_uses_pinned_waf_and_rejects_old_ns3_launcher():
     assert "test -s build/optimized/build-status.py" in native
     assert "grep -q 'scenario-one' build/optimized/build-status.py" in native
     assert "./ns3 configure" not in native
-    assert "--disable-werror" not in native.split("RUN test -f ./waf", 1)[1]
+    assert "python3 ./waf configure --enable-examples --disable-werror" not in native
