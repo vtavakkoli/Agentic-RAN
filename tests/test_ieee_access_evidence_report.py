@@ -98,3 +98,19 @@ def test_native_fixture_alone_never_certifies_ran_paper(tmp_path: Path):
     assert report["research_package_complete"] is False
     assert report["publication_ready_for_ieee_access"] is False
     assert report["checks"]["real_prb_scheduler_closed_loop_gate"] is False
+
+
+def test_smoke_only_never_claims_research_package_even_if_all_commands_pass(tmp_path: Path):
+    from agentic_ran.research_ieee_access_report import inspect_campaign
+    data = {"backend": "agentic-ran-interventional-toy-gymnasium",
+            "publication_ready_for_ieee_access": False,
+            "physical_network_sla_evidence": False,
+            "protocol": {"preset": "smoke"},
+            "training_runs": 2, "test_seeds_per_run": 4,
+            "total_executed_episodes": 24, "total_executed_steps": 120,
+            "comparisons": {"baseline_" + str(i): {
+                "mean_reward_delta": 0.0, "train_seed_bootstrap_ci95": [0.0, 0.0],
+                "holm_adjusted_p": 1.0} for i in range(5)}}
+    result = inspect_campaign(data, tmp_path)
+    assert result["smoke"] is True
+    assert result["passed"] is False  # no genuine hash-proven evidence
