@@ -423,3 +423,25 @@ MIT License. Third-party datasets retain their original terms. See each source r
 ## Citation
 
 If Agentic-RAN supports academic work before a formal paper is published, cite the repository and the exact version or commit used. `CITATION.cff` is included.
+
+
+## Matched final-algorithm Gymnasium experiment (toy functional gate)
+
+For an action-dependent, same-action-space check of **PPO, PPO with
+weight-space edits, PULSE-RAN, Twin-CQL, distributional CVaR and
+CQL/CVaR hybrid**, run:
+
+```powershell
+docker compose -f docker-compose.ran-gym.yml run --build --rm ran-gym-final-test
+docker compose -f docker-compose.ran-gym.yml run --build --rm ran-gym-final-algorithms
+```
+
+The output is `results/ran-gym-final-algorithms/gym_final_summary.json`.
+It includes held-out matched seeds, action-dependent rewards, SLA queue
+proxies and paired statistics. This is an **interventional toy Gymnasium
+evaluation, NOT native 5G-LENA/Colosseum execution**; stock ns-O-RAN Gym
+handover actions cannot execute COMMAG PRB/scheduler policies. The
+native ns-O-RAN Docker build and separate external PRB actuation gate
+remain documented at [Docker ns-O-RAN](docs/DOCKER_NSORAN.md).
+See [IEEE Access experimental audit](docs/IEEE_ACCESS_FINAL_ALGORITHMS_AUDIT.md)
+before describing controller gains in a manuscript.
