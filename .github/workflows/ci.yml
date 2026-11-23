@@ -220,9 +220,11 @@ jobs:
           python-version: "3.13"
           cache: pip
       - name: Install opt-in PPO dependencies
-        run: python -m pip install -e ".[dev,ppo]"
+        run: python -m pip install -e ".[dev,ppo,ran-gym]"
       - name: PPO and sparse-edit regression tests
         run: python -m pytest -q tests/test_research_ppo_wsp.py
+      - name: Final algorithms Gymnasium regression test
+        run: python -m pytest -q tests/test_ran_gym_final_algorithms.py
       - name: Short action-dependent toy smoke test
         run: |
           python -m agentic_ran.research_ppo_wsp \
@@ -230,3 +232,11 @@ jobs:
             --validation-episodes 4 --test-episodes 4 \
             --steps 5 --rounds 1 --output results/ppo-wsp-smoke
           test -s results/ppo-wsp-smoke/ppo_wsp_summary.json
+      - name: Final algorithms Gymnasium matched held-out smoke
+        run: |
+          python -m agentic_ran.research_ran_gym_final_algorithms \
+            --output results/ran-gym-final-smoke \
+            --ppo-updates 1 --episodes-per-update 2 \
+            --logged-episodes 12 --validation-episodes 4 \
+            --test-seeds 4 --steps 5 --wsp-rounds 1 --critic-iterations 1
+          test -s results/ran-gym-final-smoke/gym_final_summary.json
