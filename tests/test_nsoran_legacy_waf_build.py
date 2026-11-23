@@ -37,7 +37,7 @@ def test_native_dockerfile_uses_pinned_waf_and_rejects_old_ns3_launcher():
     native = dockerfile.split("FROM python:3.11-bookworm AS nsoran", 1)[1].split(
         "FROM runtime AS final-algorithms", 1
     )[0]
-    assert "bullseye-security" not in native.split("FROM python:3.11-bookworm AS nsoran", 1)[1]
+    assert "bullseye-security" not in native
     assert "apt-get -o Acquire::Retries=3 update" in native
     assert "python3 ./waf configure --enable-examples" in native
     assert "python3 ./waf build -j" in native
