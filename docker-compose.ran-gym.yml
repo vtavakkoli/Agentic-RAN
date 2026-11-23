@@ -24,6 +24,35 @@ services:
     entrypoint: ["python", "-m", "agentic_ran.research_ran_gym"]
     command: ["--config", "/workspace/configs/ran_gym_smoke.json", "--output", "/workspace/results/ran-gym-smoke"]
 
+
+  # Executes Gymnasium's 5-action toy RAN, not native NR PHY.
+  ran-gym-final-test:
+    <<: *base
+    build:
+      context: .
+      dockerfile: Dockerfile.ran-gym
+      target: final-algorithms
+    entrypoint: ["python", "-m", "pytest"]
+    command: ["-q", "tests/test_ran_gym_final_algorithms.py"]
+
+  ran-gym-final-smoke:
+    <<: *base
+    build:
+      context: .
+      dockerfile: Dockerfile.ran-gym
+      target: final-algorithms
+    entrypoint: ["python", "-m", "agentic_ran.research_ran_gym_final_algorithms"]
+    command: ["--output", "/workspace/results/ran-gym-final-smoke", "--ppo-updates", "1", "--episodes-per-update", "2", "--logged-episodes", "12", "--validation-episodes", "4", "--test-seeds", "4", "--steps", "5", "--wsp-rounds", "1", "--critic-iterations", "1"]
+
+  ran-gym-final-algorithms:
+    <<: *base
+    build:
+      context: .
+      dockerfile: Dockerfile.ran-gym
+      target: final-algorithms
+    entrypoint: ["python", "-m", "agentic_ran.research_ran_gym_final_algorithms"]
+    command: ["--output", "/workspace/results/ran-gym-final-algorithms", "--seed", "2026", "--ppo-updates", "20", "--episodes-per-update", "8", "--logged-episodes", "72", "--validation-episodes", "12", "--test-seeds", "20", "--steps", "24", "--wsp-rounds", "2", "--critic-iterations", "3"]
+
   # Fully in-container upstream ns-O-RAN/ns-3 compilation and real Gym step.
   # Stock TrafficSteering action space: native integration test ONLY.
   ran-gym-nsoran-smoke:
