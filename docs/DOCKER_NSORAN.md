@@ -43,11 +43,43 @@ the correct marker for this pinned revision. Neither the pinned
 `wscript` nor its documented configuration explicitly provides
 `--disable-werror`, so the Docker build omits that flag.
 
-The **Python 3.11 / Debian Bullseye** base is deliberate for this
-legacy simulator. Other project stages (ordinary RAN Gym, PPO/WSP,
-and Python CI) still use Python 3.13. Do not unconditionally replace
-every `FROM` with Python 3.13; that could introduce unrelated Waf,
-compiler and dependency incompatibilities.
+The native simulator keeps **Python 3.11** for its legacy dependencies
+but now uses **Debian 12 Bookworm**, not Debian 11 Bullseye.
+Bullseye reached the end of LTS on **31 August 2026**. Since September
+2026, its `bullseye-security` metadata has referred to packages
+that no longer exist at the public mirror; this yields HTTP 404
+during `apt-get install`, even after `apt-get update` and without
+a proxy/TLS failure. Using `python:3.11-bookworm` avoids the
+unsupported Bullseye package indexes. The other research stages
+continue using Python 3.13.
+
+Because the native ns-3/Waf source is older, Debian 12's newer C++
+toolchain can expose separate compatibility problems in later build
+steps; **APT repair does not itself prove that C++ compilation or
+native Gym execution succeeds**.
+
+Before re-running, inspect the native stage:
+```powershell
+Select-String -Path .\Dockerfile.ran-gym -Pattern '^FROM python:3.11-bookworm AS nsoran'
+```
+If that returns no match, your local file has not incorporated the
+latest patch. Preserve your local proxy CA changes, back up the
+Dockerfile, and apply the updated native base line.
+
+Use the correct Compose global `--progress` position:
+```powershell
+$env:NSORAN_BUILD_JOBS = "4"
+docker compose --progress plain -f docker-compose.ran-gym.yml --profile native build --pull ran-gym-nsoran-smoke
+if ($LASTEXITCODE -ne 0) { throw "Native build failed: inspect the first error" }
+docker compose -f docker-compose.ran-gym.yml --profile native run --rm ran-gym-nsoran-smoke
+if ($LASTEXITCODE -ne 0) { throw "Native Gym execution failed" }
+```
+
+**The original failure** at `apt-get install` exit code 100 is
+distinct from the previously repaired `./ns3: not found` exit code 127.
+Do not use `--fix-missing` to paper over permanently absent
+Bullseye security packages, and do not disable APT signature checks
+to bypass this problem.
 
 For Windows PowerShell (Docker Desktop Linux containers):
 
@@ -55,7 +87,7 @@ For Windows PowerShell (Docker Desktop Linux containers):
 git switch main
 git pull --ff-only origin main
 $env:NSORAN_BUILD_JOBS = "4"
-docker compose -f docker-compose.ran-gym.yml --profile native build --progress=plain ran-gym-nsoran-smoke
+docker compose --progress plain -f docker-compose.ran-gym.yml --profile native build --pull ran-gym-nsoran-smoke
 if ($LASTEXITCODE -ne 0) { throw "Native build failed; inspect first actual compile error" }
 docker compose -f docker-compose.ran-gym.yml --profile native run --rm ran-gym-nsoran-smoke
 if ($LASTEXITCODE -ne 0) { throw "Native Gym execution failed" }
