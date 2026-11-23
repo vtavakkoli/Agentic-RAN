@@ -28,7 +28,7 @@ jobs:
         run: |
           python3 -m pip install -q pytest
           PYTHONPATH=. python3 -m pytest -q tests/test_ieee_access_evidence_report.py
-      - name: Execute research pipeline smoke: train/test/final report
+      - name: "Execute research pipeline smoke: train/test/final report"
         shell: pwsh
         run: |
           ./scripts/run_ieee_access_complete.ps1 -Preset smoke -SkipOffline -SkipNative -RunId "ieee-access-ci-${{ github.run_id }}"
