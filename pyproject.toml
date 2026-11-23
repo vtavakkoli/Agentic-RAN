@@ -56,6 +56,14 @@ Homepage = "https://github.com/vtavakkoli/Agentic-RAN"
 Repository = "https://github.com/vtavakkoli/Agentic-RAN"
 Issues = "https://github.com/vtavakkoli/Agentic-RAN/issues"
 
+[tool.agentic-ran.modern-ns3]
+repository = "https://github.com/vtavakkoli/ns3-gym"
+verified_commit = "21e68565a6beaf13589fd19778b5332f4d0b29e0"
+ns3_release = "3.49"
+ns3_commit = "418210e8914e9f6bcb5cddbcc94a2cecb7853b68"
+python = "3.13"
+action_semantics = "udp-packet-count-not-commag-prb"
+
 [tool.hatch.build.targets.wheel]
 packages = ["agentic_ran"]
 
