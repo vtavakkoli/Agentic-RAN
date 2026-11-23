@@ -4,7 +4,7 @@ param(
     [switch]$FullOffline,
     [switch]$NativeSmoke,
     [switch]$ExternalPhysical,
-    [int]$TrainingRuns = 5,
+    [int]$TrainingRuns = 10,
     [int]$TestSeeds = 40
 )
 $ErrorActionPreference = "Stop"
@@ -14,8 +14,8 @@ function Invoke-Docker([string[]] $Arguments) {
     & docker @Arguments
     if ($LASTEXITCODE -ne 0) { throw ("Docker command failed (exit " + $LASTEXITCODE + ")") }
 }
-if ($TrainingRuns -lt 5 -or $TestSeeds -lt 20) {
-    throw "Research preset requires at least five training runs and twenty test seeds per run"
+if ($TrainingRuns -lt 8 -or $TestSeeds -lt 20) {
+    throw "Research preset requires at least eight training runs and twenty test seeds per run"
 }
 Invoke-Docker -Arguments @("info", "--format", "Docker CPUs: {{.NCPU}}")
 New-Item -ItemType Directory -Force -Path "results", "artifacts", "data/raw/commag" | Out-Null
@@ -35,7 +35,7 @@ Invoke-Docker -Arguments @("compose", "-f", $compose, "run", "--rm", "ran-gym-ca
 # Tiny end-to-end check with 2 training seeds; no manuscript performance claim.
 Invoke-Docker -Arguments @("compose", "-f", $compose, "run", "--rm", "ran-gym-campaign-smoke")
 
-# Five or more independent training seeds; strict validation/test separation;
+# Ten independent training seeds by default; strict validation/test separation;
 # four scenarios, 40 held-out seeds per run, 6 controllers, 32-step episodes.
 Invoke-Docker -Arguments @("compose", "-f", $compose, "run", "--rm", "ran-gym-campaign")
 $output = Join-Path "results" $env:RAN_GYM_CAMPAIGN_NAME
