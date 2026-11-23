@@ -59,6 +59,20 @@ if ($RunId -notmatch '^ieee-access-[a-zA-Z0-9-]+$' -or $RunId.Contains('..')) {
 $runRoot = Join-Path 'results' $RunId
 if (Test-Path $runRoot) { throw "Refusing to overwrite an existing run: $runRoot" }
 New-Item -ItemType Directory -Force -Path $runRoot, 'artifacts', 'data/raw/commag' | Out-Null
+# Host bind mounts must be writable by the container user. On Linux GitHub
+# runners the host uid is commonly 1001 while Compose's fallback is 1000.
+# Respect explicitly configured LOCAL_UID/LOCAL_GID; do not guess on Windows.
+$hostId = Get-Command id -CommandType Application -ErrorAction SilentlyContinue
+if ($null -ne $hostId -and [string]::IsNullOrWhiteSpace($env:LOCAL_UID) -and
+    [string]::IsNullOrWhiteSpace($env:LOCAL_GID)) {
+    $hostUid = ((& $hostId.Source -u) | Select-Object -First 1).Trim()
+    $hostGid = ((& $hostId.Source -g) | Select-Object -First 1).Trim()
+    if ($hostUid -match '^\d+$' -and $hostGid -match '^\d+$') {
+        $env:LOCAL_UID = $hostUid
+        $env:LOCAL_GID = $hostGid
+        Write-Host "Docker bind-mount uid:gid = ${hostUid}:${hostGid}"
+    }
+}
 $manifestPath = Join-Path $runRoot 'run_manifest.json'
 $failureMessage = $null
 $runStarted = (Get-Date).ToUniversalTime().ToString('o')
