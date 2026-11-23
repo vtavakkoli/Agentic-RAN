@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Standalone isolated research verification image; does not mutate the production image.
-FROM python:3.12-slim AS runtime
+FROM python:3.13-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /workspace
 COPY pyproject.toml README.md LICENSE ./
@@ -51,3 +51,7 @@ RUN ./ns3 configure --enable-examples --disable-werror --build-profile=optimized
 WORKDIR /workspace
 # Stock nsoran supports traffic steering/energy saving, not COMMAG PRB actuation.
 # The build is a native ns-O-RAN Gym smoke/integration test, not a publication result.
+
+# Opt-in CPU-only learned-controller tests: PPO, WSP, CQL, and CVaR.
+FROM runtime AS final-algorithms
+RUN python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torch>=2.6,<3"

@@ -50,6 +50,10 @@ try {
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "build", "ran-gym-unit", "ran-gym-smoke")
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "run", "--rm", "ran-gym-unit")
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "run", "--rm", "ran-gym-smoke")
+    # 4. All six compatible final learned algorithms, matched Gym action-dependent rollouts.
+    # Explicitly TOY ONLY: not native ns-O-RAN scheduler/PRB evidence.
+    Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "run", "--rm", "ran-gym-final-test")
+    Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "run", "--rm", "ran-gym-final-algorithms")
     if ($NativeGym -or $External) {
         # Build and execute the official ns-O-RAN/ns-3 engine *in Docker*.
         # Stock TS actions are handovers; this is a native integration check,
@@ -58,7 +62,7 @@ try {
             "up", "--build", "--exit-code-from", "ran-gym-nsoran-smoke", "ran-gym-nsoran-smoke")
     }
     if (-not $External) {
-        Write-Host "Offline pipeline and toy Gym checks complete. No compatible PRB controller active result was tested." -ForegroundColor Yellow
+        Write-Host "Offline pipeline and matched final-algorithm TOY Gym checks complete. No native PRB controller result was tested." -ForegroundColor Yellow
         Write-Host "For active verification configure external ns-O-RAN and re-run with -External." -ForegroundColor Yellow
         exit 0
     }
