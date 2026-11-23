@@ -1,0 +1,50 @@
+name: IEEE Access PowerShell constrained-language manifest regression
+
+on:
+  pull_request:
+    paths:
+      - "scripts/run_ieee_access_complete.ps1"
+      - "agentic_ran/research_ieee_access_report.py"
+      - "tests/test_ieee_access_evidence_report.py"
+      - ".github/workflows/ieee-access-powershell-clm.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/run_ieee_access_complete.ps1"
+      - "agentic_ran/research_ieee_access_report.py"
+      - "tests/test_ieee_access_evidence_report.py"
+      - ".github/workflows/ieee-access-powershell-clm.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  constrained-language-manifest:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exercise stage creation and manifest serialization in constrained Windows PowerShell
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'
+          if ($ExecutionContext.SessionState.LanguageMode -ne 'ConstrainedLanguage') {
+            throw 'Expected ConstrainedLanguage execution for test'
+          }
+          & .\scripts\run_ieee_access_complete.ps1 -Preset smoke -SkipOffline -SkipNative -SelfTest -RunId ieee-access-clm-test-2026
+          if (-not $?) { throw 'Constrained Language Mode manifest self-test failed' }
+          $testFile = 'results/ieee-access-clm-test-2026/run_manifest.json'
+          if (-not (Test-Path $testFile)) { throw 'Manifest missing' }
+          $manifest = Get-Content -LiteralPath $testFile -Raw | ConvertFrom-Json
+          if ($manifest.stages.constrained_language_manifest_smoke.status -ne 'passed') {
+            throw 'Self-test stage did not pass'
+          }
+          Write-Host 'CLM_MANIFEST_PASS'
+      - name: Upload non-simulation CLM manifest regression artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: powershell-clm-manifest-test
+          path: results/ieee-access-clm-test-2026/run_manifest.json
+          if-no-files-found: error
