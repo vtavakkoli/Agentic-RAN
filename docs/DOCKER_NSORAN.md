@@ -11,7 +11,7 @@ docker compose -f docker-compose.ran-gym.yml --profile native up --build --exit-
 ~~~
 
 This invokes the `nsoran` Docker build target with:
-- Python 3.11 (legacy native build stage only), Agentic-RAN, Gymnasium and upstream `nsoran==0.0.2`
+- Python 3.13 runtime on Debian 12 Bookworm with Python 3.11 specifically for legacy Waf; Agentic-RAN, Gymnasium and upstream `nsoran==0.0.2`
 - e2sim from pinned `wineslab/o-ran-e2sim` commit
 - pinned ns3-mmwave O-RAN release and pinned O-RAN E2 interface
 - native compiled `scenario-one` traffic-steering environment
@@ -30,8 +30,8 @@ It must instead be built with the legacy Waf toolchain:
 
 ~~~bash
 cd /opt/ns3-mmwave-oran
-python3 ./waf configure --enable-examples --build-profile=optimized --out=build/optimized
-python3 ./waf build -j 4
+/usr/bin/python3.11 ./waf configure --enable-examples --build-profile=optimized --out=build/optimized
+/usr/bin/python3.11 ./waf build -j 4
 test -s build/optimized/build-status.py
 grep -q 'scenario-one' build/optimized/build-status.py
 ~~~
@@ -43,15 +43,15 @@ the correct marker for this pinned revision. Neither the pinned
 `wscript` nor its documented configuration explicitly provides
 `--disable-werror`, so the Docker build omits that flag.
 
-The native simulator keeps **Python 3.11** for its legacy dependencies
-but now uses **Debian 12 Bookworm**, not Debian 11 Bullseye.
+The native simulator uses **Python 3.13 Bookworm** as requested, while installing
+Debian's `/usr/bin/python3.11` for the pinned legacy Waf build scripts.
 Bullseye reached the end of LTS on **31 August 2026**. Since September
 2026, its `bullseye-security` metadata has referred to packages
 that no longer exist at the public mirror; this yields HTTP 404
 during `apt-get install`, even after `apt-get update` and without
-a proxy/TLS failure. Using `python:3.11-bookworm` avoids the
-unsupported Bullseye package indexes. The other research stages
-continue using Python 3.13.
+a proxy/TLS failure. Using `python:3.13-bookworm` avoids the
+unsupported Bullseye package indexes. Other research stages
+also continue using Python 3.13.
 
 Because the native ns-3/Waf source is older, Debian 12's newer C++
 toolchain can expose separate compatibility problems in later build
@@ -60,7 +60,7 @@ native Gym execution succeeds**.
 
 Before re-running, inspect the native stage:
 ```powershell
-Select-String -Path .\Dockerfile.ran-gym -Pattern '^FROM python:3.11-bookworm AS nsoran'
+Select-String -Path .\Dockerfile.ran-gym -Pattern '^FROM python:3.13-bookworm AS nsoran'
 ```
 If that returns no match, your local file has not incorporated the
 latest patch. Preserve your local proxy CA changes, back up the
@@ -74,6 +74,40 @@ if ($LASTEXITCODE -ne 0) { throw "Native build failed: inspect the first error" 
 docker compose -f docker-compose.ran-gym.yml --profile native run --rm ran-gym-nsoran-smoke
 if ($LASTEXITCODE -ne 0) { throw "Native Gym execution failed" }
 ```
+
+## Python 3.13's missing `pipes` module (Waf fix)
+
+The pinned ns-O-RAN Waf tool (`waf 2.0.21`) is an older Python program.
+Python 3.13 removed the standard-library `pipes` module, so running
+`python3 ./waf configure` in the `python:3.13-bookworm` image fails
+with `No module named 'pipes'` when it loads
+`clang_compilation_database`. This is the user's actual Docker
+`nsoran 17/18` error, not an SSL/proxy issue.
+
+The native stage therefore adds
+`python3.11 python3.11-dev python3-distutils` from Debian 12
+and runs Waf **only** with `/usr/bin/python3.11`:
+
+```dockerfile
+FROM python:3.13-bookworm AS nsoran
+
+# In the native APT dependencies:
+# python3.11 python3.11-dev python3-distutils
+
+RUN test -f ./waf \
+    && /usr/bin/python3.11 -c 'import pipes' \
+    && /usr/bin/python3.11 ./waf configure --enable-examples --build-profile=optimized --out=build/optimized \
+    && /usr/bin/python3.11 ./waf build -j "${NSORAN_BUILD_JOBS}" \
+    && test -s build/optimized/build-status.py \
+    && grep -q 'scenario-one' build/optimized/build-status.py \
+    && ln -s /opt/ns3-mmwave-oran /opt/ns3
+```
+
+The project package and Gym runtime still use the image's Python 3.13
+(`python -m pip`, `python -m agentic_ran...`). Waf's compatible
+Python 3.11 interpreter is a local build dependency, not a downgrade
+of the container's primary Python version. A subsequent C++ compiler
+or runtime issue must be diagnosed independently.
 
 **The original failure** at `apt-get install` exit code 100 is
 distinct from the previously repaired `./ns3: not found` exit code 127.

@@ -14,8 +14,10 @@ RUN mkdir -p /workspace/results /workspace/artifacts
 # Source origins follow the official OpenRAN Gym ns-O-RAN install guide.
 # Debian 11 Bullseye LTS ended 2026-08-31; its bullseye-security index
 # references .deb files removed from public mirrors (apt 404, exit 100).
-# Use a maintained Debian 12 base while keeping Python 3.11 for legacy nsoran.
-FROM python:3.11-bookworm AS nsoran
+# Keep the application's Python 3.13 interpreter on Debian 12, but
+# explicitly install Debian's Python 3.11 for the pinned legacy Waf builder.
+# Waf v2.0.21 uses "pipes", which was removed from Python 3.13.
+FROM python:3.13-bookworm AS nsoran
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /workspace
 COPY pyproject.toml README.md LICENSE ./
@@ -31,6 +33,7 @@ RUN rm -rf /var/lib/apt/lists/* \
     && apt-get -o Acquire::Retries=3 update \
     && apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
        git ca-certificates build-essential g++ cmake ninja-build pkg-config \
+       python3.11 python3.11-dev python3-distutils \
        libsctp-dev lksctp-tools autoconf automake libtool bison flex \
        libboost-all-dev libsqlite3-dev libgsl-dev libxml2-dev libgtk-3-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -51,9 +54,12 @@ WORKDIR /opt/ns3-mmwave-oran
 # The pinned ns-O-RAN fork is ns-3.35-era and ships ./waf, NOT ./ns3.
 # Its nsoran Python wrapper discovers scenario-one via build/optimized/build-status.py.
 # Do not pass --disable-werror here: it is not registered in the pinned wscript.
+# Run the legacy Waf builder with Python 3.11 explicitly. The application
+# itself still uses the Python 3.13 base, pip and Gymnasium runtime.
 RUN test -f ./waf \
-    && python3 ./waf configure --enable-examples --build-profile=optimized --out=build/optimized \
-    && python3 ./waf build -j "${NSORAN_BUILD_JOBS}" \
+    && /usr/bin/python3.11 -c 'import pipes' \
+    && /usr/bin/python3.11 ./waf configure --enable-examples --build-profile=optimized --out=build/optimized \
+    && /usr/bin/python3.11 ./waf build -j "${NSORAN_BUILD_JOBS}" \
     && test -s build/optimized/build-status.py \
     && grep -q 'scenario-one' build/optimized/build-status.py \
     && ln -s /opt/ns3-mmwave-oran /opt/ns3
