@@ -1,0 +1,57 @@
+name: IEEE Access reproducible Docker evidence pipeline (smoke)
+on:
+  pull_request:
+    paths:
+      - "agentic_ran/research_ieee_access_report.py"
+      - "scripts/run_ieee_access_complete.ps1"
+      - "tests/test_ieee_access_evidence_report.py"
+      - "docker-compose.publication.yml"
+      - "docker-compose.ran-gym.yml"
+      - ".github/workflows/ieee-access-evidence-smoke.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  research-pipeline-smoke:
+    name: Train/test/report smoke (functional only; NOT RAN paper evidence)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Docker and PowerShell availability
+        run: |
+          docker info
+          pwsh -NoProfile -Command '$PSVersionTable.PSVersion'
+          mkdir -p results artifacts data/raw/commag
+      - name: Test audit integrity (no synthetic physical evidence)
+        run: |
+          python3 -m pip install -q pytest
+          PYTHONPATH=. python3 -m pytest -q tests/test_ieee_access_evidence_report.py
+      - name: Execute research pipeline smoke: train/test/final report
+        shell: pwsh
+        run: |
+          ./scripts/run_ieee_access_complete.ps1 -Preset smoke -SkipOffline -SkipNative -RunId "ieee-access-ci-${{ github.run_id }}"
+      - name: Confirm report exists and NEVER certifies scientific submission
+        run: |
+          test -s "results/ieee-access-ci-${{ github.run_id }}/final-report/ieee_access_report.html"
+          test -s "results/ieee-access-ci-${{ github.run_id }}/final-report/ieee_access_evidence.json"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path("results/ieee-access-ci-${{ github.run_id }}")
+          d=json.loads((root/"final-report/ieee_access_evidence.json").read_text())
+          assert d["publication_ready_for_ieee_access"] is False
+          assert d["research_package_complete"] is False
+          assert d["checks"]["real_prb_scheduler_closed_loop_gate"] is False
+          assert d["experiment_status"] == "FUNCTIONAL_SMOKE_ONLY; NOT MANUSCRIPT EVIDENCE"
+          assert (root/"campaign/campaign_summary.json").stat().st_size > 0
+          print("PIPELINE_SMOKE_PASS", d["experiment_status"])
+          PY
+      - name: Upload machine-readable and visual report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ieee-access-functional-pipeline-smoke
+          path: results/ieee-access-ci-${{ github.run_id }}/
+          if-no-files-found: warn
