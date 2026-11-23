@@ -189,7 +189,7 @@ Inspect run manifest, checksums, CSV traces, and negative comparisons before cit
 
 def campaign(
     output: Path, *, base_seed: int = 2026,
-    training_runs: int = 5, test_seeds: int = 40,
+    training_runs: int = 10, test_seeds: int = 40,
     ppo_updates: int = 48, episodes_per_update: int = 12,
     logged_episodes: int = 120, validation_episodes: int = 24,
     steps: int = 32, wsp_rounds: int = 3, critic_iterations: int = 5,
@@ -200,9 +200,9 @@ def campaign(
     if min(test_seeds, steps, validation_episodes, ppo_updates, episodes_per_update,
            logged_episodes, critic_iterations) < 1:
         raise ValueError("all counts must be positive")
-    if not smoke and (training_runs < 5 or test_seeds < 20 or steps < 20
+    if not smoke and (training_runs < 8 or test_seeds < 20 or steps < 20
                       or validation_episodes < 12 or logged_episodes < 72):
-        raise ValueError("research preset requires >=5 train runs, >=20 test seeds, >=20 steps")
+        raise ValueError("research preset requires >=8 train runs, >=20 test seeds, >=20 steps")
     if output.exists() and any(output.iterdir()):
         raise FileExistsError("campaign output must be a new empty directory: avoid overwriting evidence")
     output.mkdir(parents=True, exist_ok=True)
@@ -320,7 +320,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Full toy-RAN Gym training/evidence campaign; never physical RAN validation")
     parser.add_argument("--output", type=Path, default=Path("results/ran-gym-campaign"))
     parser.add_argument("--seed", type=int, default=2026)
-    parser.add_argument("--training-runs", type=int, default=5)
+    parser.add_argument("--training-runs", type=int, default=10)
     parser.add_argument("--test-seeds", type=int, default=40)
     parser.add_argument("--ppo-updates", type=int, default=48)
     parser.add_argument("--episodes-per-update", type=int, default=12)
