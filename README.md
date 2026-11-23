@@ -1,17 +1,82 @@
 # Agentic-RAN
 
-[![CI](https://github.com/vtavakkoli/Agentic-RAN/actions/workflows/ci.yml/badge.svg)](https://github.com/vtavakkoli/Agentic-RAN/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](compose.yaml)
+**Safety-governed agentic intelligence for Open RAN—built for reproducible research, measurable evidence, and controlled execution.**
 
-**Agentic-RAN is a safety-governed research platform for agentic intelligence in Open RAN, with reproducible real-data benchmarking and explicit deployment-readiness gates.**
+[![CI](https://github.com/vtavakkoli/Agentic-RAN/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vtavakkoli/Agentic-RAN/actions/workflows/ci.yml)
+[![Native ns-3 verification](https://github.com/vtavakkoli/Agentic-RAN/actions/workflows/native-verified-ns3-gym.yml/badge.svg?branch=main)](https://github.com/vtavakkoli/Agentic-RAN/actions/workflows/native-verified-ns3-gym.yml)
+[![Python](https://img.shields.io/badge/Python-3.11%2B%20%7C%203.13%20native-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
+[![Research](https://img.shields.io/badge/Status-Research%20Platform-4C6680)](#production-limitations)
 
-The project combines lightweight learned policy proposals with short-horizon planning, pluggable RAN world models, independent critics, uncertainty/OOD gates, multi-cell coordination, rollback and audit. Version 2.2 adds a pinned Colosseum O-RAN COMMAG workflow with compressed sequential transitions, offline Fitted-Q training, experiment-separated testing and reproducible evidence.
+[![scikit-learn](https://img.shields.io/badge/ML-scikit--learn-F7931E?logo=scikitlearn&logoColor=white)](https://scikit-learn.org/)
+[![PyTorch](https://img.shields.io/badge/RL-PyTorch%20optional-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Gymnasium](https://img.shields.io/badge/Simulation-Gymnasium-00875A)](https://gymnasium.farama.org/)
+[![ns-3](https://img.shields.io/badge/Native%20Simulation-ns--3.49-00599C)](https://www.nsnam.org/)
+[![C++23](https://img.shields.io/badge/Native%20Bridge-C%2B%2B23-00599C?logo=cplusplus&logoColor=white)](docs/DOCKER_MODERN_NS3_GYM.md)
+[![ZeroMQ](https://img.shields.io/badge/Messaging-ZeroMQ-DF0000)](https://zeromq.org/)
+[![Protocol Buffers](https://img.shields.io/badge/Serialization-Protobuf-4285F4)](https://protobuf.dev/)
+[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Docker Compose](https://img.shields.io/badge/DevOps-Docker%20Compose-2496ED?logo=docker&logoColor=white)](compose.yaml)
+[![pytest](https://img.shields.io/badge/Testing-pytest-0A9EDC?logo=pytest&logoColor=white)](https://pytest.org/)
 
-> **Machine learning proposes. World models predict. Independent critics verify. Deterministic safety logic owns execution authority.**
+Agentic-RAN is a **modular, safety-first research and evaluation platform** for intelligent **Open Radio Access Networks (O-RAN)**. It combines KPI-aware machine-learning proposals, short-horizon planning, digital twins, independent critics, uncertainty/OOD assessment, constrained action selection, rollback, and audit trails. Its evaluation stack separates **public network measurements**, **reproducible offline learning**, **action-dependent toy experiments**, and a **verified real ns-3 UDP simulation backend**.
 
-An LLM, when enabled for explanation, never sits on the control path.
+> **Machine learning proposes. World models predict. Independent critics verify. Deterministic safety logic retains execution authority.**
+
+An LLM, when enabled for explanation, **does not sit in the actuation control path**.
+
+> [!IMPORTANT]
+> **Research evidence is not production authorization.** The ns-3.49 integration has passed a real, compiled **UDP closed-loop simulation**; it does **not** currently validate 5G NR PHY, O-RAN E2, COMMAG PRB/scheduler execution, or real-network gains. Missing physical capabilities fail explicitly rather than returning synthetic results.
+
+## Explore the project
+
+| Start here | Technical deep dives |
+|---|---|
+| [Why Agentic-RAN](#why-this-repository-is-different) | [Control architecture](#agentic-control-cycle) |
+| [Real-data benchmark](#one-command-real-data-benchmark) | [COMMAG offline RL](#commag-offline-rl-benchmark) |
+| [Verified native ns-3](#verified-native-ns-3-gymnasium-integration) | [Safety and trust](#safety-and-trustworthy-control) |
+| [Execution modes](#execution-modes) | [Research methodology](#research-positioning) |
+| [Local Python setup](#local-python-quick-start) | [REST API](#existing-rest-api) |
+| [Project structure](#repository-structure) | [License](#license) · [Cite](#citation) |
+
+## System at a glance
+
+| Layer | Purpose | Technology / evidence |
+|---|---|---|
+| **Data & telemetry** | Normalize measured network KPIs; distinguish measured from derived features | pandas, NumPy, public Zenodo datasets, COMMAG, srsRAN shadow adapters |
+| **Intelligence** | Generate, score, and compare bounded controller proposals | scikit-learn, offline Fitted-Q, optional PyTorch PPO/WSP |
+| **Reasoning & trust** | Forecast, simulate, gate uncertainty/OOD, enforce constraints and audit | digital twins, independent critics, deterministic safety logic |
+| **Interaction** | Serve decisions and integrate controlled external RAN adapters | FastAPI, configurable shadow/canary boundaries |
+| **Simulation** | Compare policies in explicit action spaces; verify native network exchange | Gymnasium toy backends **and separately** native ns-3.49 + ZeroMQ/Protobuf |
+| **Reproducibility** | Pin data/code, test behavior, and create inspectable reports | Docker Compose, pytest, GitHub Actions, checksum manifests |
+
+### What has actually been verified?
+
+| Evidence level | What it demonstrates | What it does **not** demonstrate |
+|---|---|---|
+| **Real public measurements** | Observed network KPIs, source provenance, held-out offline evaluation | Live network actuation or causal production gains |
+| **Action-dependent toy Gymnasium** | Controller decisions affect an explicit simulated state and reward | True 5G NR PHY, PRB scheduling, or E2AP |
+| **Native ns-3.49 / Python 3.13** | Real ns-3 UDP packets, actions, observations, rewards, repeatable episodes, resource cleanup | COMMAG-equivalent PRB/scheduler or handover performance |
+| **External physical RAN control** | Requires separately supplied, validated model/action mapping and operator gates | **Not claimed as completed** by the packaged UDP simulator |
+
+## Fastest ways to run
+
+**Full real-data evidence pipeline** (see [details](#one-command-real-data-benchmark)):
+
+```bash
+docker compose --profile test up --build --abort-on-container-exit --exit-code-from test test
+```
+
+**Real native ns-3 UDP experiment** (a separate, opt-in image—not the production container):
+
+```bash
+docker compose --progress plain -f docker-compose.ran-gym.yml --profile native build ran-gym-modern-ns3-smoke
+docker compose -f docker-compose.ran-gym.yml --profile native run --rm ran-gym-modern-ns3-smoke
+```
+
+The native run writes `results/modern-ns3/real_closed_loop.json`. It compiles pinned **ns-3.49/C++23**, installs the independently maintained [vtavakkoli/ns3-gym](https://github.com/vtavakkoli/ns3-gym) package under **Python 3.13**, and verifies multiple real UDP episodes. See the [build and test guide](docs/DOCKER_MODERN_NS3_GYM.md).
+
+**Experiment boundaries:** These workflows are intentionally independent. Running a successful UDP simulator does not convert a toy or offline scheduler result into a physical NR claim.
 
 ## Why this repository is different
 
@@ -43,6 +108,32 @@ flowchart LR
     N --> O[Observe outcome]
     O --> P[Rollback / audit / drift]
 ```
+
+## Verified native ns-3 Gymnasium integration
+
+**Real C++ simulation, not an interface-only mock.** A dedicated Docker target builds the official **ns-3.49** release (`418210e8914e9f6bcb5cddbcc94a2cecb7853b68`) and the independently verified [vtavakkoli/ns3-gym](https://github.com/vtavakkoli/ns3-gym) bridge (pinned commit `21e68565a6beaf13589fd19778b5332f4d0b29e0`).
+
+[![Verified native workflow](https://github.com/vtavakkoli/Agentic-RAN/actions/workflows/native-verified-ns3-gym.yml/badge.svg?branch=main)](https://github.com/vtavakkoli/Agentic-RAN/actions/workflows/native-verified-ns3-gym.yml)
+[![ns3-gym upstream validation](https://github.com/vtavakkoli/ns3-gym/actions/workflows/native-ns3.yml/badge.svg?branch=main)](https://github.com/vtavakkoli/ns3-gym/actions/workflows/native-ns3.yml)
+
+```mermaid
+flowchart LR
+    P["Agentic-RAN UDP research policy"] --> A["VerifiedNs3UdpEnv"]
+    A <-->|"Gymnasium + ZeroMQ / Protobuf"| B["Pinned ns3-gym bridge"]
+    B <--> C["Official ns-3.49 event scheduler"]
+    C --> D["Real UDP socket receiver"]
+    D --> K["Measured RX, TX, bytes and throughput"]
+    K --> A
+    A --> R["Action receipts, rewards, reports"]
+```
+
+The verified example controls the number of **256-byte UDP packets** sent between two ns-3 nodes, and returns receiver-derived packet counts and throughput. The adapter checks that the simulated network transmitted the **requested action** and fails on incompatible actions. Repeated seeded episodes and explicit fallback/error paths are tested.
+
+**Verified results:** [successful post-merge native workflow](https://github.com/vtavakkoli/Agentic-RAN/actions/runs/45205513828) · [3-episode, 15-step JSON evidence](https://github.com/vtavakkoli/Agentic-RAN/actions/runs/45205513828/artifacts/14832874620). One measured episode delivered **9 of 9 transmitted UDP packets (2,304 bytes)**. All **7 standard CI jobs** also passed on [the same merged revision](https://github.com/vtavakkoli/Agentic-RAN/actions/runs/45205513872).
+
+**Strict limitation:** The UDP action is **not** a scheduler, slice, PRB or O-RAN E2 action. The frozen COMMAG controller cannot be evaluated by relabelling that example. Native publication-quality PRB control requires a new validated RAN scenario and compatible action/observation mapper.
+
+**Instructions:** [docs/DOCKER_MODERN_NS3_GYM.md](docs/DOCKER_MODERN_NS3_GYM.md) · [native adapter source](agentic_ran/research_modern_ns3_adapter.py) · [native integration tests](tests/test_modern_ns3_integration.py).
 
 ## One-command real-data benchmark
 
@@ -320,6 +411,46 @@ Telemetry providers support synthetic observations, CSV replay, srsRAN JSON WebS
 
 **Protocol boundary:** Agentic-RAN does not pretend that HTTP JSON is E2AP. ASN.1/E2AP/E2SM encoding and SCTP transport belong to a standards-capable O-RAN SC, FlexRIC or equivalent RIC/xApp binding. See `docs/ORAN_INTEGRATION.md`.
 
+## Matched final-algorithm Gymnasium experiment (toy functional gate)
+
+For an action-dependent, same-action-space check of **PPO, PPO with
+weight-space edits, PULSE-RAN, Twin-CQL, distributional CVaR and
+CQL/CVaR hybrid**, run:
+
+```powershell
+docker compose -f docker-compose.ran-gym.yml run --build --rm ran-gym-final-test
+docker compose -f docker-compose.ran-gym.yml run --build --rm ran-gym-final-algorithms
+```
+
+The output is `results/ran-gym-final-algorithms/gym_final_summary.json`.
+It includes held-out matched seeds, action-dependent rewards, SLA queue
+proxies and paired statistics. This is an **interventional toy Gymnasium
+evaluation, NOT native 5G-LENA/Colosseum execution**. The separate
+[verified ns-3.49 Python 3.13 Gymnasium integration](docs/DOCKER_MODERN_NS3_GYM.md)
+runs real two-node UDP packet-control experiments from the pinned
+[vtavakkoli/ns3-gym](https://github.com/vtavakkoli/ns3-gym) repository.
+**UDP packet counts are not COMMAG PRB/scheduler actions**; a separate
+validated NR RAN backend and action mapper remain mandatory for
+publication-level physical evaluation.
+See [IEEE Access experimental audit](docs/IEEE_ACCESS_FINAL_ALGORITHMS_AUDIT.md)
+before describing controller gains in a manuscript.
+
+## Research-scale multi-training-seed RAN Gym experiment
+
+For the most comprehensive **compatible-action** Gymnasium train/validate/test
+campaign (10 independent training seeds, 40 held-out test seeds per training
+run, six controllers and four traffic/channel scenarios) use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_ieee_access_gym_campaign.ps1 -FullOffline
+```
+
+The Docker implementation exports frozen protocol JSON, PPO/WSP checkpoints,
+episode and step traces, aggregate paired statistics, scenario and training-run
+tables, SHA-256 evidence manifest and a self-contained HTML report. It does not
+equate toy Gymnasium results with physical NR PRB/scheduler actuation. See
+[research-scale reproducibility and evidence limitations](docs/IEEE_ACCESS_MULTISEED_GYM_CAMPAIGN.md).
+
 ## Execution modes
 
 | Mode | RAN change | Intended use |
@@ -423,44 +554,3 @@ MIT License. Third-party datasets retain their original terms. See each source r
 ## Citation
 
 If Agentic-RAN supports academic work before a formal paper is published, cite the repository and the exact version or commit used. `CITATION.cff` is included.
-
-
-## Matched final-algorithm Gymnasium experiment (toy functional gate)
-
-For an action-dependent, same-action-space check of **PPO, PPO with
-weight-space edits, PULSE-RAN, Twin-CQL, distributional CVaR and
-CQL/CVaR hybrid**, run:
-
-```powershell
-docker compose -f docker-compose.ran-gym.yml run --build --rm ran-gym-final-test
-docker compose -f docker-compose.ran-gym.yml run --build --rm ran-gym-final-algorithms
-```
-
-The output is `results/ran-gym-final-algorithms/gym_final_summary.json`.
-It includes held-out matched seeds, action-dependent rewards, SLA queue
-proxies and paired statistics. This is an **interventional toy Gymnasium
-evaluation, NOT native 5G-LENA/Colosseum execution**. The separate
-[verified ns-3.49 Python 3.13 Gymnasium integration](docs/DOCKER_MODERN_NS3_GYM.md)
-runs real two-node UDP packet-control experiments from the pinned
-[vtavakkoli/ns3-gym](https://github.com/vtavakkoli/ns3-gym) repository.
-**UDP packet counts are not COMMAG PRB/scheduler actions**; a separate
-validated NR RAN backend and action mapper remain mandatory for
-publication-level physical evaluation.
-See [IEEE Access experimental audit](docs/IEEE_ACCESS_FINAL_ALGORITHMS_AUDIT.md)
-before describing controller gains in a manuscript.
-
-## Research-scale multi-training-seed RAN Gym experiment
-
-For the most comprehensive **compatible-action** Gymnasium train/validate/test
-campaign (10 independent training seeds, 40 held-out test seeds per training
-run, six controllers and four traffic/channel scenarios) use:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_ieee_access_gym_campaign.ps1 -FullOffline
-```
-
-The Docker implementation exports frozen protocol JSON, PPO/WSP checkpoints,
-episode and step traces, aggregate paired statistics, scenario and training-run
-tables, SHA-256 evidence manifest and a self-contained HTML report. It does not
-equate toy Gymnasium results with physical NR PRB/scheduler actuation. See
-[research-scale reproducibility and evidence limitations](docs/IEEE_ACCESS_MULTISEED_GYM_CAMPAIGN.md).
