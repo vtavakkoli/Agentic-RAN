@@ -93,6 +93,17 @@ jobs:
           LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f docker-compose.ran-gym.yml build ran-gym-unit ran-gym-smoke
           LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f docker-compose.ran-gym.yml run --rm ran-gym-unit
           LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f docker-compose.ran-gym.yml run --rm ran-gym-smoke
+      - name: Build and run final PPO-WSP/CQL/CVaR Docker environment
+        run: |
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f docker-compose.ran-gym.yml build ran-gym-final-test ran-gym-final-smoke
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f docker-compose.ran-gym.yml run --rm ran-gym-final-test
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f docker-compose.ran-gym.yml run --rm ran-gym-final-smoke
+          test -s results/ran-gym-final-smoke/gym_final_summary.json
+      - name: Upload final-policy toy Gym evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-six-controller-gym-toy-smoke
+          path: results/ran-gym-final-smoke/gym_final_summary.json
 
   package:
     name: Package
