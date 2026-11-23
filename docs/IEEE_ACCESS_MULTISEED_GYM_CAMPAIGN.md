@@ -17,7 +17,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_ieee_access_gym_campaign.
 ```
 
 This executes the unit suite, multi-training-seed campaign smoke test, final
-algorithm tests, **5 independently trained PPO and offline critic runs**,
+algorithm tests, **10 independently trained PPO and offline critic runs**,
 validation-only weight-space editing, **40 held-out test seeds per training
 run** across four scenarios, full independent offline COMMAG publication,
 and PULSE shadow evaluation. Additional native simulator compilation is
@@ -101,7 +101,7 @@ docker compose -f docker-compose.ran-gym.yml run --build --rm ran-gym-campaign
 Within `results/ran-gym-campaign-<timestamp>/` (default runner):
 
 - `protocol_frozen.json`: precommitted hyperparameters and train/eval split
-- `training_run_00/` ... `training_run_04/`: frozen/edited PPO weights,
+- `training_run_00/` ... `training_run_09/`: frozen/edited PPO weights,
   per-policy paired results, original executed step/episode traces
 - `campaign_summary.json`: run-level paired inference and claim boundaries
 - `training_run_means.csv`, `scenario_means.csv`
