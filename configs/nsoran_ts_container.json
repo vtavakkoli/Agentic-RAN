@@ -1,0 +1,13 @@
+{
+  "configuration": [0],
+  "bufferSize": [10],
+  "rlcAmEnabled": [1],
+  "ues": [2],
+  "e2nrEnabled": [1],
+  "simTime": [3.0],
+  "indicationPeriodicity": [0.1],
+  "hoSinrDifference": [5],
+  "dataRate": [0],
+  "useSemaphores": [1],
+  "enableE2FileLogging": [1]
+}

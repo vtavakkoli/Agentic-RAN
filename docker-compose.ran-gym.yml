@@ -1,0 +1,76 @@
+name: agentic-ran-gym
+x-base: &base
+  build:
+    context: .
+    dockerfile: Dockerfile.ran-gym
+    target: runtime
+  environment:
+    PYTHONUNBUFFERED: "1"
+  user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+  volumes:
+    - ./results:/workspace/results
+    - ./artifacts:/workspace/artifacts:ro
+    - ./configs:/workspace/configs:ro
+  restart: "no"
+
+services:
+  ran-gym-unit:
+    <<: *base
+    entrypoint: ["python", "-m", "pytest"]
+    command: ["-q", "tests/test_ran_gym_benchmark.py"]
+
+  ran-gym-smoke:
+    <<: *base
+    entrypoint: ["python", "-m", "agentic_ran.research_ran_gym"]
+    command: ["--config", "/workspace/configs/ran_gym_smoke.json", "--output", "/workspace/results/ran-gym-smoke"]
+
+  # Fully in-container upstream ns-O-RAN/ns-3 compilation and real Gym step.
+  # Stock TrafficSteering action space: native integration test ONLY.
+  ran-gym-nsoran-smoke:
+    profiles: ["native"]
+    <<: *base
+    build:
+      context: .
+      dockerfile: Dockerfile.ran-gym
+      target: nsoran
+      args:
+        NSORAN_BUILD_JOBS: "${NSORAN_BUILD_JOBS:-8}"
+    init: true
+    shm_size: "1gb"
+    entrypoint: ["timeout", "480s", "python", "-m", "agentic_ran.research_nsoran_container_smoke"]
+    command: ["--output", "/workspace/results/nsoran-native/native_gym_smoke.json", "--steps", "2"]
+
+  # Same in-container simulator, but this research gate requires a frozen
+  # compatible policy and validated state/action mapping. No host ns-3.
+  ran-gym-active:
+    profiles: ["external"]
+    <<: *base
+    build:
+      context: .
+      dockerfile: Dockerfile.ran-gym
+      target: nsoran
+      args:
+        NSORAN_BUILD_JOBS: "${NSORAN_BUILD_JOBS:-8}"
+    init: true
+    shm_size: "1gb"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: "/workspace/site-adapters"
+    volumes:
+      - ./results:/workspace/results
+      - ./artifacts:/workspace/artifacts:ro
+      - ./configs:/workspace/configs:ro
+      - ./external/site-adapters:/workspace/site-adapters:ro
+    entrypoint: ["python", "-m", "agentic_ran.research_ran_gym"]
+    command: ["--config", "/workspace/configs/ran_gym_active.json", "--output", "/workspace/results/ran-gym-active"]
+
+  publication-final-gate:
+    <<: *base
+    entrypoint: ["python", "-m", "agentic_ran.research_publication_gate"]
+    command:
+      - --offline
+      - /workspace/results/publication/publication_summary.json
+      - --active
+      - /workspace/results/ran-gym-active/ran_gym_summary.json
+      - --output
+      - /workspace/results/publication/final_evidence_gate.json

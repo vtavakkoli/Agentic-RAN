@@ -33,6 +33,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ran-gym = ["gymnasium>=1.1,<2"]
 # PPO and weight-space programming are opt-in (PyTorch is not needed for CI).
 ppo = [
   "torch>=2.6,<3",

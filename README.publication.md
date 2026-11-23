@@ -1,5 +1,24 @@
 # Publication benchmark quick start
 
+## Native ns-O-RAN Gym in Docker (optional)
+
+The `nsoran` image stage downloads and compiles **e2sim, ns3-mmwave
+and O-RAN E2** inside the container. No Windows ns-3 installation or
+mounted simulator binaries are required:
+
+```powershell
+$env:NSORAN_BUILD_JOBS = "8"
+docker compose -f docker-compose.ran-gym.yml --profile native up --build --exit-code-from ran-gym-nsoran-smoke ran-gym-nsoran-smoke
+```
+
+This runs a **stock traffic-steering Gym smoke**, not the frozen
+COMMAG scheduler/PRB controller; it must **not** be used as evidence
+of Agentic-RAN's active superiority. The Docker source build is not
+part of standard CI, so it requires first-run validation. See
+[Docker native ns-O-RAN instructions](docs/DOCKER_NSORAN.md) and
+[active evaluation methodology](docs/RAN_GYM_ACTIVE_PUBLICATION.md).
+
+
 The final publication workflow runs on the normal `python:3.13-slim` image and keeps the original COMMAG PPO as a literature reference only.
 
 Run the complete workflow:
