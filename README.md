@@ -439,10 +439,13 @@ docker compose -f docker-compose.ran-gym.yml run --build --rm ran-gym-final-algo
 The output is `results/ran-gym-final-algorithms/gym_final_summary.json`.
 It includes held-out matched seeds, action-dependent rewards, SLA queue
 proxies and paired statistics. This is an **interventional toy Gymnasium
-evaluation, NOT native 5G-LENA/Colosseum execution**; stock ns-O-RAN Gym
-handover actions cannot execute COMMAG PRB/scheduler policies. The
-native ns-O-RAN Docker build and separate external PRB actuation gate
-remain documented at [Docker ns-O-RAN](docs/DOCKER_NSORAN.md).
+evaluation, NOT native 5G-LENA/Colosseum execution**. The separate
+[verified ns-3.49 Python 3.13 Gymnasium integration](docs/DOCKER_MODERN_NS3_GYM.md)
+runs real two-node UDP packet-control experiments from the pinned
+[vtavakkoli/ns3-gym](https://github.com/vtavakkoli/ns3-gym) repository.
+**UDP packet counts are not COMMAG PRB/scheduler actions**; a separate
+validated NR RAN backend and action mapper remain mandatory for
+publication-level physical evaluation.
 See [IEEE Access experimental audit](docs/IEEE_ACCESS_FINAL_ALGORITHMS_AUDIT.md)
 before describing controller gains in a manuscript.
 
