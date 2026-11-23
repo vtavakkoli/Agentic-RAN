@@ -445,3 +445,19 @@ native ns-O-RAN Docker build and separate external PRB actuation gate
 remain documented at [Docker ns-O-RAN](docs/DOCKER_NSORAN.md).
 See [IEEE Access experimental audit](docs/IEEE_ACCESS_FINAL_ALGORITHMS_AUDIT.md)
 before describing controller gains in a manuscript.
+
+## Research-scale multi-training-seed RAN Gym experiment
+
+For the most comprehensive **compatible-action** Gymnasium train/validate/test
+campaign (5 independent training seeds, 40 held-out test seeds per training
+run, six controllers and four traffic/channel scenarios) use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_ieee_access_gym_campaign.ps1 -FullOffline
+```
+
+The Docker implementation exports frozen protocol JSON, PPO/WSP checkpoints,
+episode and step traces, aggregate paired statistics, scenario and training-run
+tables, SHA-256 evidence manifest and a self-contained HTML report. It does not
+equate toy Gymnasium results with physical NR PRB/scheduler actuation. See
+[research-scale reproducibility and evidence limitations](docs/IEEE_ACCESS_MULTISEED_GYM_CAMPAIGN.md).
