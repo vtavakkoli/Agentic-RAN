@@ -66,7 +66,7 @@ services:
       - --output
       - /workspace/results/${RAN_GYM_CAMPAIGN_NAME:-ran-gym-campaign}
       - --training-runs
-      - "${RAN_GYM_TRAINING_RUNS:-5}"
+      - "${RAN_GYM_TRAINING_RUNS:-10}"
       - --test-seeds
       - "${RAN_GYM_TEST_SEEDS:-40}"
       - --ppo-updates
