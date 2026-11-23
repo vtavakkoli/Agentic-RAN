@@ -51,24 +51,24 @@ try {
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "run", "--rm", "ran-gym-unit")
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "run", "--rm", "ran-gym-smoke")
     # 4. All six compatible final learned algorithms, matched Gym action-dependent rollouts.
-    # Explicitly TOY ONLY: not native ns-O-RAN scheduler/PRB evidence.
+    # Explicitly TOY ONLY: not a native NR scheduler/PRB experiment.
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "run", "--rm", "ran-gym-final-test")
     Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "run", "--rm", "ran-gym-final-algorithms")
-    if ($NativeGym -or $External) {
-        # Build and execute the official ns-O-RAN/ns-3 engine *in Docker*.
-        # Stock TS actions are handovers; this is a native integration check,
-        # not evidence that COMMAG-trained Agentic-RAN beat other policies.
+    if ($NativeGym) {
+        # Verified native ns-3.49 UDP example (action is packet count, NOT PRB).
+        # Never count this separate physical packet-delivery check as a
+        # COMMAG scheduler performance experiment.
         Invoke-Docker -Arguments @("compose", "-f", "docker-compose.ran-gym.yml", "--profile", "native",
-            "up", "--build", "--exit-code-from", "ran-gym-nsoran-smoke", "ran-gym-nsoran-smoke")
+            "up", "--build", "--exit-code-from", "ran-gym-modern-ns3-smoke", "ran-gym-modern-ns3-smoke")
     }
     if (-not $External) {
         Write-Host "Offline pipeline and matched final-algorithm TOY Gym checks complete. No native PRB controller result was tested." -ForegroundColor Yellow
-        Write-Host "For active verification configure external ns-O-RAN and re-run with -External." -ForegroundColor Yellow
+        Write-Host "For UDP native ns-3.49 verification use -NativeGym; PRB/COMMAG needs a separate validated external engine (-External)." -ForegroundColor Yellow
         exit 0
     }
-    # 4. Actual ns-O-RAN requires site-supplied model/action adapter + compiled ns-3.
+    # 4. Real PRB/COMMAG requires site-supplied validated native RAN model/action adapter.
     if (-not (Test-Path "configs/ran_gym_active.json")) {
-        throw "Create configs/ran_gym_active.json with a real PRB-compatible model/adapter; ns-3 is now built inside Docker"
+        throw "Create configs/ran_gym_active.json with a separately validated PRB-compatible simulator and model/adapter; generic ns-3 UDP is insufficient"
     }
     if (-not (Test-Path "external/site-adapters")) {
         throw "Install the real policy adapter in external/site-adapters"

@@ -9,15 +9,11 @@ COPY tests ./tests
 COPY configs ./configs
 RUN python -m pip install --no-cache-dir ".[ran-gym,dev]"
 RUN mkdir -p /workspace/results /workspace/artifacts
-# Optional full ns-O-RAN simulator *inside this Docker image*.
-# The native simulator is large and built only when targeting "nsoran".
-# Source origins follow the official OpenRAN Gym ns-O-RAN install guide.
-# Debian 11 Bullseye LTS ended 2026-08-31; its bullseye-security index
-# references .deb files removed from public mirrors (apt 404, exit 100).
-# Keep the application's Python 3.13 interpreter on Debian 12, but
-# explicitly install Debian's Python 3.11 for the pinned legacy Waf builder.
-# Waf v2.0.21 uses "pipes", which was removed from Python 3.13.
-FROM python:3.13-bookworm AS nsoran
+# Independently verified native ns-3.49 + Gymnasium implementation.
+# Source is ONLY the pinned vtavakkoli/ns3-gym repo and official ns-3.49.
+# Legacy wineslab/ns-o-ran and tkn-tub/ns3-gym are not runtime dependencies.
+# Verified independently in https://github.com/vtavakkoli/ns3-gym/actions/runs/45200458924
+FROM python:3.13-bookworm AS modern-ns3
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /workspace
 COPY pyproject.toml README.md LICENSE ./
@@ -25,55 +21,43 @@ COPY agentic_ran ./agentic_ran
 COPY tests ./tests
 COPY configs ./configs
 USER root
-ARG NSORAN_BUILD_JOBS=8
-ARG NSORAN_E2SIM_SHA=275f58fff459975cfcaf75e5b53c338a2bb08166
-ARG NSORAN_NS3_SHA=0efbfaf370350c170beb249951e5c349d7f89b34
-ARG NSORAN_INTERFACE_SHA=2db7a071963a85505d8f694310844f2f4ea26ddc
-RUN rm -rf /var/lib/apt/lists/* \
-    && apt-get -o Acquire::Retries=3 update \
-    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
-       git ca-certificates build-essential g++ cmake ninja-build pkg-config \
-       python3.11 python3.11-dev python3-distutils \
-       libsctp-dev lksctp-tools autoconf automake libtool bison flex \
-       libboost-all-dev libsqlite3-dev libgsl-dev libxml2-dev libgtk-3-dev \
+ARG MODERN_NS3_BUILD_JOBS=4
+ARG MODERN_NS3_GYM_SHA=21e68565a6beaf13589fd19778b5332f4d0b29e0
+ARG MODERN_NS3_SHA=418210e8914e9f6bcb5cddbcc94a2cecb7853b68
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates git cmake ninja-build build-essential pkg-config \
+       libzmq3-dev libprotobuf-dev protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
-RUN python -m pip install --no-cache-dir ".[ran-gym,dev]" "nsoran==0.0.2"
-RUN git clone https://github.com/wineslab/o-ran-e2sim.git /opt/e2sim \
-    && git -C /opt/e2sim checkout --detach "${NSORAN_E2SIM_SHA}"
-WORKDIR /opt/e2sim/e2sim/build
-RUN cmake .. -DDEV_PKG=1 -DLOG_LEVEL=2 \
-    && cmake --build . --parallel "${NSORAN_BUILD_JOBS}" \
-    && cpack -G DEB \
-    && dpkg -i ./e2sim-dev_1.0.0_*.deb \
-    && ldconfig
-RUN git clone https://github.com/wineslab/ns-o-ran-ns3-mmwave.git /opt/ns3-mmwave-oran \
-    && git -C /opt/ns3-mmwave-oran checkout --detach "${NSORAN_NS3_SHA}" \
-    && git clone https://github.com/o-ran-sc/sim-ns3-o-ran-e2.git /opt/ns3-mmwave-oran/contrib/oran-interface \
-    && git -C /opt/ns3-mmwave-oran/contrib/oran-interface checkout --detach "${NSORAN_INTERFACE_SHA}"
-WORKDIR /opt/ns3-mmwave-oran
-# GCC 12 detects potentially freed ref-counted callback pointers in the
-# legacy upstream ns3-core optimized build. The pinned ns3 Waf wscript
-# appends CXXFLAGS_EXTRA *after* its own flags, so retain the diagnostic
-# but do not escalate this specific warning to an error. Do not disable
-# -Werror globally or suppress -Wuse-after-free entirely.
-# This is compilation compatibility, NOT proof that the source is safe.
-ARG NSORAN_WAF_CXXFLAGS_EXTRA="-Wno-error=use-after-free"
-ENV CXXFLAGS_EXTRA="${NSORAN_WAF_CXXFLAGS_EXTRA}"
-# The pinned ns-O-RAN fork is ns-3.35-era and ships ./waf, NOT ./ns3.
-# Its nsoran Python wrapper discovers scenario-one via build/optimized/build-status.py.
-# Do not pass --disable-werror here: it is not registered in the pinned wscript.
-# Run the legacy Waf builder with Python 3.11 explicitly. The application
-# itself still uses the Python 3.13 base, pip and Gymnasium runtime.
-RUN test -f ./waf \
-    && /usr/bin/python3.11 -c 'import pipes' \
-    && /usr/bin/python3.11 ./waf configure --enable-examples --build-profile=optimized --out=build/optimized \
-    && /usr/bin/python3.11 ./waf build -j "${NSORAN_BUILD_JOBS}" \
-    && test -s build/optimized/build-status.py \
-    && grep -q 'scenario-one' build/optimized/build-status.py \
-    && ln -s /opt/ns3-mmwave-oran /opt/ns3
+RUN python3.13 -m pip install --no-cache-dir ".[ran-gym,dev]"
+RUN git clone https://github.com/vtavakkoli/ns3-gym.git /opt/modern-ns3gym \
+    && git -C /opt/modern-ns3gym checkout --detach "${MODERN_NS3_GYM_SHA}" \
+    && test "$(git -C /opt/modern-ns3gym rev-parse HEAD)" = "${MODERN_NS3_GYM_SHA}"
+WORKDIR /opt/modern-ns3gym
+RUN bash scripts/generate-proto.sh \
+    && python3.13 -m pip install --no-cache-dir .
+RUN git clone --depth 1 --branch ns-3.49 \
+      https://github.com/nsnam/ns-3-dev-git.git /opt/ns3 \
+    && test "$(git -C /opt/ns3 rev-parse HEAD)" = "${MODERN_NS3_SHA}"
+RUN cp -r cpp/contrib/vtns3gym /opt/ns3/contrib/vtns3gym \
+    && cp cpp/scratch/modern-gym-loop.cc /opt/ns3/scratch/modern-gym-loop.cc
+RUN cmake -S /opt/ns3 -B /opt/ns3/cmake-build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=23 \
+      -DNS3_EXAMPLES=OFF -DNS3_TESTS=OFF -DNS3_GSL=OFF \
+      "-DNS3_ENABLED_MODULES=core;network;internet;point-to-point;vtns3gym" \
+    && cmake --build /opt/ns3/cmake-build \
+         --target scratch_modern-gym-loop --parallel "${MODERN_NS3_BUILD_JOBS}"
+RUN set -eu; \
+    executable="$(find /opt/ns3 -path '*/scratch/*' -type f -executable \
+      -name '*modern-gym-loop*' -print -quit)"; \
+    test -n "$executable"; \
+    ln -s "$executable" /usr/local/bin/vtns3gym-sim; \
+    test -x /usr/local/bin/vtns3gym-sim
+ENV VTNS3GYM_BINARY=/usr/local/bin/vtns3gym-sim
 WORKDIR /workspace
-# Stock nsoran supports traffic steering/energy saving, not COMMAG PRB actuation.
-# The build is a native ns-O-RAN Gym smoke/integration test, not a publication result.
+RUN python3.13 -m pytest -q tests/test_modern_ns3_integration.py \
+    && python3.13 -m agentic_ran.research_modern_ns3_container_smoke \
+       --output /tmp/agentic-ran-modern-ns3-native-test.json
 
 # Opt-in CPU-only learned-controller tests: PPO, WSP, CQL, and CVaR.
 FROM runtime AS final-algorithms

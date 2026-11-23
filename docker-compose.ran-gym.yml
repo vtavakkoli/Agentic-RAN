@@ -103,35 +103,32 @@ services:
     entrypoint: ["python", "-m", "pytest"]
     command: ["-q", "tests/test_ran_gym_campaign.py"]
 
-  # Fully in-container upstream ns-O-RAN/ns-3 compilation and real Gym step.
-  # Stock TrafficSteering action space: native integration test ONLY.
-  ran-gym-nsoran-smoke:
+  # Verified ns-3.49 CMake/ZeroMQ/Protobuf physical UDP packet simulator.
+  # This is NOT an NR scheduler or COMMAG PRB experiment.
+  ran-gym-modern-ns3-smoke:
     profiles: ["native"]
     <<: *base
     build:
       context: .
       dockerfile: Dockerfile.ran-gym
-      target: nsoran
+      target: modern-ns3
       args:
-        NSORAN_BUILD_JOBS: "${NSORAN_BUILD_JOBS:-8}"
+        MODERN_NS3_BUILD_JOBS: "${MODERN_NS3_BUILD_JOBS:-4}"
     init: true
-    shm_size: "1gb"
-    entrypoint: ["timeout", "480s", "python", "-m", "agentic_ran.research_nsoran_container_smoke"]
-    command: ["--output", "/workspace/results/nsoran-native/native_gym_smoke.json", "--steps", "2"]
+    entrypoint: ["python3.13", "-m", "agentic_ran.research_modern_ns3_container_smoke"]
+    command: ["--output", "/workspace/results/modern-ns3/real_closed_loop.json", "--horizon", "5"]
 
-  # Same in-container simulator, but this research gate requires a frozen
-  # compatible policy and validated state/action mapping. No host ns-3.
+  # External site adapters remain opt-in for a separately validated COMMAG
+  # PRB/scheduler use case. The verified generic UDP example must NOT be
+  # silently substituted into this research publication pipeline.
   ran-gym-active:
     profiles: ["external"]
     <<: *base
     build:
       context: .
       dockerfile: Dockerfile.ran-gym
-      target: nsoran
-      args:
-        NSORAN_BUILD_JOBS: "${NSORAN_BUILD_JOBS:-8}"
+      target: runtime
     init: true
-    shm_size: "1gb"
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: "/workspace/site-adapters"

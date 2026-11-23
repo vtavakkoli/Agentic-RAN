@@ -1,0 +1,46 @@
+name: Verified native ns-3.49 Gymnasium Agentic-RAN UDP integration
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-ns3-udp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build only verified pinned vtavakkoli/ns3-gym + official ns-3.49
+        run: |
+          mkdir -p results artifacts
+          docker compose --progress plain -f docker-compose.ran-gym.yml \
+            --profile native build ran-gym-modern-ns3-smoke
+      - name: Real closed-loop Agentic-RAN integration (no mocks)
+        run: |
+          mkdir -p results/modern-ns3 artifacts
+          LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+            docker compose -f docker-compose.ran-gym.yml \
+              --profile native run --rm ran-gym-modern-ns3-smoke
+          test -s results/modern-ns3/real_closed_loop.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result=json.loads(Path("results/modern-ns3/real_closed_loop.json").read_text())
+          assert result["backend"]=="verified-ns3-3.49-udp-real"
+          assert result["actual_native_episodes"]==3
+          assert result["actual_native_steps"]==15
+          assert result["action_receipts_verified"] is True
+          assert result["commag_prb_controller_evaluated"] is False
+          assert result["publication_superiority_ready"] is False
+          assert result["episodes"][0]["trace"] == result["episodes"][1]["trace"]
+          assert result["episodes"][0]["final_kpis"]["rx_packets"]>0
+          print("REAL_NS3_AGENTIC_RAN_PASS", result["actual_native_steps"])
+          PY
+      - name: Upload native network observations/actions/rewards/KPIs
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentic-ran-real-ns3-349-udp-closed-loop
+          path: results/modern-ns3/real_closed_loop.json
+          if-no-files-found: error

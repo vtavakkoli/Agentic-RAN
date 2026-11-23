@@ -83,10 +83,10 @@ jobs:
           assert report["publication_superiority_ready"] is False
           assert report["episodes"] > 0
           PY
-      - name: Validate optional self-contained native ns-O-RAN Compose
+      - name: Validate verified native ns-3.49 and external research Compose
         run: docker compose -f docker-compose.ran-gym.yml --profile native --profile external config --quiet
-      # Building all ns-3/e2sim C++ sources is resource intensive and is
-      # intentionally a separate opt-in local Docker integration test.
+      # Native ns-3.49 C++ compilation and actual UDP packet-control experiments
+      # are mandatory in the separate native-verified-ns3-gym.yml workflow.
       - name: Docker test image and Gym smoke
         run: |
           mkdir -p results artifacts
