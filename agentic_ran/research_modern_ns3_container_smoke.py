@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from agentic_ran.research_modern_ns3_adapter import (
     SCENARIO, VERIFIED_NS3_GYM_SHA, VERIFIED_NS3_SHA,
     VerifiedNs3UdpEnv, make_verified_ns3_udp_policy, safe_udp_action,
