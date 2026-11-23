@@ -24,7 +24,7 @@ $env:MODERN_NS3_BUILD_JOBS = "4"
 docker compose --progress plain -f docker-compose.ran-gym.yml --profile native build ran-gym-modern-ns3-smoke
 if ($LASTEXITCODE -ne 0) { throw "Pinned native ns-3 build/real tests failed" }
 
-docker compose -f docker-compose.ran-gym.yml --profile native run --no-build --rm ran-gym-modern-ns3-smoke
+docker compose -f docker-compose.ran-gym.yml --profile native run --rm ran-gym-modern-ns3-smoke
 if ($LASTEXITCODE -ne 0) { throw "Real native closed loop failed" }
 ```
 
