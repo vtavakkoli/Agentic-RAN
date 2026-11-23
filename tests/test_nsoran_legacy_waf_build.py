@@ -34,14 +34,19 @@ def test_native_dockerfile_uses_pinned_waf_and_rejects_old_ns3_launcher():
     if not path.exists():
         pytest.skip("Dockerfile not copied into installed-package-only test image")
     dockerfile = path.read_text()
-    native = dockerfile.split("FROM python:3.11-bookworm AS nsoran", 1)[1].split(
+    native = dockerfile.split("FROM python:3.13-bookworm AS nsoran", 1)[1].split(
         "FROM runtime AS final-algorithms", 1
     )[0]
     assert "bullseye-security" not in native
     assert "apt-get -o Acquire::Retries=3 update" in native
-    assert "python3 ./waf configure --enable-examples" in native
-    assert "python3 ./waf build -j" in native
+    assert "python3.11 python3.11-dev python3-distutils" in native
+    assert "/usr/bin/python3.11 -c 'import pipes'" in native
+    assert "/usr/bin/python3.11 ./waf configure --enable-examples" in native
+    assert '/usr/bin/python3.11 ./waf build -j' in native
+    assert '&& python3 ./waf configure' not in native
+    assert '&& python3 ./waf build' not in native
+    assert 'RUN python -m pip install --no-cache-dir ".[ran-gym,dev]" "nsoran==0.0.2"' in native
     assert "test -s build/optimized/build-status.py" in native
     assert "grep -q 'scenario-one' build/optimized/build-status.py" in native
     assert "./ns3 configure" not in native
-    assert "python3 ./waf configure --enable-examples --disable-werror" not in native
+    assert "/usr/bin/python3.11 ./waf configure --enable-examples --disable-werror" not in native
