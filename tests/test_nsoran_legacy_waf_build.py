@@ -8,6 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import pytest
+
 from agentic_ran.research_ran_gym_adapters import nsoran_build_status_path
 
 
@@ -28,7 +30,10 @@ def test_modern_ns3_backend_uses_platform_lock_file(tmp_path: Path):
 
 
 def test_native_dockerfile_uses_pinned_waf_and_rejects_old_ns3_launcher():
-    dockerfile = (Path(__file__).resolve().parent.parent / "Dockerfile.ran-gym").read_text()
+    path = Path(__file__).resolve().parent.parent / "Dockerfile.ran-gym"
+    if not path.exists():
+        pytest.skip("Dockerfile not copied into installed-package-only test image")
+    dockerfile = path.read_text()
     native = dockerfile.split("FROM python:3.11-bullseye AS nsoran", 1)[1].split(
         "FROM runtime AS final-algorithms", 1
     )[0]
