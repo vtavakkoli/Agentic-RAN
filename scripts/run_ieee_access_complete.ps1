@@ -102,7 +102,11 @@ function Save-RunManifest {
     }
     # A JSON manifest is used by the report compiler and guards against mixing
     # evidence from earlier experiments.
-    $manifest | ConvertTo-Json -Depth 24 | Set-Content -Path $manifestPath -Encoding UTF8
+    # PowerShell 5.1 Set-Content -Encoding UTF8 adds a BOM, which Python
+    # json.loads(utf-8) rejects. Write explicitly without BOM on Windows/Linux.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText((Join-Path $root $manifestPath),
+        ($manifest | ConvertTo-Json -Depth 24), $utf8NoBom)
 }
 function Invoke-Stage([string]$Stage, [scriptblock]$Body) {
     if ($stages.Contains($Stage)) { throw "Duplicate experiment stage: $Stage" }
@@ -231,6 +235,13 @@ try {
 Write-Host "Research output: $runRoot" -ForegroundColor Green
 Write-Host "HTML report: $(Join-Path $runRoot 'final-report/ieee_access_report.html')" -ForegroundColor Green
 Write-Host "Evidence JSON: $(Join-Path $runRoot 'final-report/ieee_access_evidence.json')" -ForegroundColor Green
+$evidencePath = Join-Path $runRoot 'final-report/ieee_access_evidence.json'
+if (Test-Path $evidencePath) {
+    $assessment = Get-Content $evidencePath -Raw | ConvertFrom-Json
+    if ($assessment.research_package_complete -ne $true) {
+        Write-Warning "Scientific evidence incomplete or smoke-only: $($assessment.experiment_status). Read the report before paper claims."
+    }
+}
 if ($failureMessage) {
     Write-Error "Study incomplete; inspect run_manifest.json and generated report. $failureMessage"
     exit 1
