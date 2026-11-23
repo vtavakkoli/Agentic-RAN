@@ -62,7 +62,12 @@ New-Item -ItemType Directory -Force -Path $runRoot, 'artifacts', 'data/raw/comma
 # Host bind mounts must be writable by the container user. On Linux GitHub
 # runners the host uid is commonly 1001 while Compose's fallback is 1000.
 # Respect explicitly configured LOCAL_UID/LOCAL_GID; do not guess on Windows.
-$hostId = Get-Command id -CommandType Application -ErrorAction SilentlyContinue
+$linuxPlatform = Get-Variable -Name IsLinux -ErrorAction SilentlyContinue
+$runningOnLinux = ($null -ne $linuxPlatform -and $linuxPlatform.Value -eq $true)
+$hostId = if ($runningOnLinux) {
+    Get-Command id -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+} else { $null }
 if ($null -ne $hostId -and [string]::IsNullOrWhiteSpace($env:LOCAL_UID) -and
     [string]::IsNullOrWhiteSpace($env:LOCAL_GID)) {
     $hostUid = ((& $hostId.Source -u) | Select-Object -First 1).Trim()
