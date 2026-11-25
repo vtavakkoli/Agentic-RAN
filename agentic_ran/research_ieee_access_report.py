@@ -183,6 +183,27 @@ def inspect_campaign(data: dict[str, Any] | None, root: Path) -> dict[str, Any]:
         "executed_steps": data.get("total_executed_steps"),
         "all_positive": data.get("all_comparisons_show_significant_positive_gain") is True,
     })
+    if not out["errors"]:
+        # Descriptive winner is independent of the predeclared PPO-WSP test.
+        try:
+            grouped = {}
+            with (root / "training_run_means.csv").open(encoding="utf-8", newline="") as stream:
+                for row in csv.DictReader(stream):
+                    values = tuple(float(row[k]) for k in
+                                   ("mean_total_reward", "mean_sla", "mean_switch_rate"))
+                    if not all(math.isfinite(v) for v in values):
+                        raise ValueError("nonfinite run mean")
+                    grouped.setdefault(row["policy"], []).append(values)
+            if not grouped or any(len(v) != data["training_runs"] for v in grouped.values()):
+                raise ValueError("missing run mean")
+            ranks = [{"policy": k, "mean_reward": sum(r[0] for r in v) / len(v),
+                      "mean_sla": sum(r[1] for r in v) / len(v),
+                      "mean_switch_rate": sum(r[2] for r in v) / len(v)}
+                     for k, v in grouped.items()]
+            out["rankings"] = sorted(ranks, key=lambda x: x["mean_reward"], reverse=True)
+            out["winner_by_mean_toy_return"] = out["rankings"][0]["policy"]
+        except (OSError, KeyError, ValueError, TypeError) as exc:
+            out["errors"].append(f"invalid run ranking: {exc}")
     out["passed"] = not out["errors"]
     return out
 
@@ -418,6 +439,10 @@ def produce(run_root: Path, out: Path, manifest_path: Path | None = None) -> dic
            "- `fig_toy_reward_deltas.svg`: toy experiment visualization (when evidence exists).",
            "- `sha256_manifest.json`: SHA-256 checksums for produced report artifacts.",
            ""]
+    if campaign.get("winner_by_mean_toy_return"):
+        md.extend(["", "## Original six-controller descriptive ranking", "",
+                   f"Winner by mean toy return: {campaign['winner_by_mean_toy_return']}.",
+                   "Original PPO-WSP hypothesis remains unchanged; these data are exploratory for PA-SPI."])
     if expanded_verified:
         md.extend(["", "## Independent PA-SPI confirmation (toy only)", "",
                    f"- Descriptive winner: {expanded.get('winner_by_mean_toy_return')}.",
@@ -444,6 +469,9 @@ def produce(run_root: Path, out: Path, manifest_path: Path | None = None) -> dic
     styled_html += f'<div class="alert"><strong>{html.escape(conclusion)}</strong><p>IEEE Access submission readiness is NOT automatically certified. UDP simulator integration is not NR PRB/scheduler validation.</p></div>'
     styled_html += f'<section class="stats"><div><b>Training runs</b><p>{html.escape(str(campaign.get("training_runs", "n/a")))}</p></div><div><b>Toy held-out episodes</b><p>{html.escape(str(campaign.get("executed_episodes", "n/a")))}</p></div><div><b>Native UDP episodes</b><p>{len(episode_rows)}</p></div></section>'
     styled_html += '<h2>Native ns-3.49 receiver-derived metrics</h2>' + html_table(episode_rows, native_columns)
+    if campaign.get("rankings"):
+        styled_html += '<h2>Original toy ranking (descriptive)</h2>' + html_table(
+            campaign["rankings"], ["policy", "mean_reward", "mean_sla", "mean_switch_rate"])
     styled_html += '<h2>Paired toy Gymnasium policy comparisons</h2>' + html_table(comp_rows, comp_columns) + svg
     styled_html += '<h2>Offline COMMAG audit</h2>' + '<p>'+html.escape(f"Present={offline['present']}; internal checks={offline['passed']}; heldout seen={offline.get('seen_test_rows','n/a')}; unseen={offline.get('unseen_test_rows','n/a')}")+'</p>'
     if expanded_verified:
