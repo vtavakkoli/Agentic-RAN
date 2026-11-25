@@ -8,7 +8,10 @@ from agentic_ran.research_pulse_anchored_spi import (
     fit, features, make_world, TEST_SCENARIOS, N, PulseSPI, samples,
 )
 from agentic_ran.research_pulse_ran import select_pulse_ran
-from agentic_ran.research_paspi_campaign import evaluate, run, PRIMARY, REFERENCE, METHODS
+pytest.importorskip("torch")
+pytest.importorskip("gymnasium")
+
+from agentic_ran.research_paspi_campaign import run, REFERENCE, METHODS  # noqa: E402
 
 
 def test_pulse_thresholds_frozen():
