@@ -1,0 +1,41 @@
+name: PA-SPI confirmatory research smoke
+
+on:
+  pull_request:
+    paths:
+      - 'agentic_ran/**'
+      - 'tests/test_research_paspi.py'
+      - 'tests/test_commag_evidence_audit.py'
+      - 'scripts/run_ieee_access_complete.ps1'
+      - '.github/workflows/paspi-confirmatory.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-controller-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install '.[ran-gym,dev]'
+      - run: python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch>=2.6,<3'
+      - name: Invariants and actual paired smoke
+        run: python -m pytest -q tests/test_research_paspi.py tests/test_commag_evidence_audit.py tests/test_ieee_access_evidence_report.py
+      - name: Run independent functional smoke and archive actual results
+        run: |
+          python -m agentic_ran.research_paspi_campaign --output results/paspi-ci --smoke --training-runs 2 --test-seeds 4 --steps 5 --logged-episodes 12 --validation-episodes 4 --ppo-updates 1 --episodes-per-update 2 --wsp-rounds 1 --critic-iterations 1 --workers 2
+          python -c 'import json; x=json.load(open("results/paspi-ci/summary.json")); assert x["smoke"] and not x["publication_ready_for_ieee_access"] and not x["physical_nr_evidence"]'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paspi-functional-evidence-not-paper-results
+          path: results/paspi-ci/
+          if-no-files-found: error
