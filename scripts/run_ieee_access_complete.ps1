@@ -29,6 +29,10 @@ param(
     [switch]$SkipNative,
     [switch]$ExternalPhysical,
     [switch]$SelfTest,
+    [switch]$ExpandedStudy,
+    [ValidateRange(2, 100)][int]$ConfirmatoryRuns = 20,
+    [ValidateRange(4, 1000)][int]$ConfirmatorySeeds = 100,
+    [ValidateRange(1, 16)][int]$ConfirmatoryWorkers = 4,
     [string]$RunId = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -112,6 +116,10 @@ function Save-RunManifest {
             include_offline = $includeOffline
             include_native = $includeNative
             include_physical = [bool]$ExternalPhysical
+            include_expanded_study = [bool]$ExpandedStudy
+            confirmatory_runs = $ConfirmatoryRuns
+            confirmatory_seeds = $ConfirmatorySeeds
+            confirmatory_workers = $ConfirmatoryWorkers
         }
         verified_dependency_pins = [ordered]@{
             ns3_release = '3.49'
@@ -188,6 +196,9 @@ $env:AGENTIC_RAN_EVAL_ADAPTIVE_HYBRID = '1'
 # This requires real independently confirmed BWP/PHY capacities, not example data.
 $env:AGENTIC_RAN_EVAL_JOINT_SLICE_ADVANTAGE = '0'
 
+if ($ExpandedStudy -and $Preset -eq 'research' -and ($ConfirmatoryRuns -lt 20 -or $ConfirmatorySeeds -lt 100)) {
+    throw 'Expanded research requires >=20 independent training runs and >=100 fresh test seeds.'
+}
 $gymCompose = 'docker-compose.ran-gym.yml'
 $pubCompose = 'docker-compose.publication.yml'
 try {
@@ -214,10 +225,40 @@ try {
             Invoke-Verified 'Small TRAIN/TEST smoke, not manuscript evidence' @('compose', '-f', $gymCompose, 'run', '--rm', 'ran-gym-campaign-smoke')
         }
     }
+    if ($ExpandedStudy) {
+        Invoke-Stage 'expanded_paspi_regressions' {
+            Invoke-Verified 'PA-SPI invariants and paired end-to-end smoke' @('compose', '-f', $gymCompose, 'run', '--rm', '--entrypoint', 'python', 'ran-gym-campaign-test',
+                '-m', 'pytest', '-q', '-p', 'no:cacheprovider', 'tests/test_research_paspi.py', 'tests/test_commag_evidence_audit.py')
+        }
+        Invoke-Stage 'expanded_paspi_confirmatory_campaign' {
+            $argsList = @('compose', '-f', $gymCompose, 'run', '--rm', '--entrypoint', 'python', 'ran-gym-campaign-test',
+                '-m', 'agentic_ran.research_paspi_campaign', '--output', "/workspace/results/$RunId/confirmatory")
+            if ($Preset -eq 'smoke') {
+                $argsList += @('--smoke', '--training-runs', '2', '--test-seeds', '4', '--steps', '5',
+                    '--logged-episodes', '12', '--validation-episodes', '4', '--ppo-updates', '1',
+                    '--episodes-per-update', '2', '--wsp-rounds', '1', '--critic-iterations', '1', '--workers', '1')
+            } else {
+                $argsList += @('--training-runs', [string]$ConfirmatoryRuns, '--test-seeds', [string]$ConfirmatorySeeds,
+                    '--steps', [string]$Steps, '--logged-episodes', [string]$LoggedEpisodes,
+                    '--validation-episodes', [string]$ValidationEpisodes, '--ppo-updates', [string]$PPOUpdates,
+                    '--episodes-per-update', [string]$EpisodesPerUpdate, '--wsp-rounds', [string]$WspRounds,
+                    '--critic-iterations', [string]$CriticIterations, '--workers', [string]$ConfirmatoryWorkers)
+            }
+            Invoke-Verified 'Fresh-seed PA-SPI vs PULSE and all ablations' $argsList
+        }
+    }
     if ($includeOffline) {
         Invoke-Stage 'offline_commag_train_and_test' {
             Invoke-Verified 'Full COMMAG download/prepare/train/evaluate' @('compose', '-f', $pubCompose,
                 'up', '--build', '--force-recreate', '--exit-code-from', 'publication-test', 'publication-test')
+        }
+        if ($ExpandedStudy) {
+            Invoke-Stage 'commag_conditional_evidence_audit' {
+                Invoke-Verified 'Audit action coverage, abstention, OOD and latency without causal overclaim' @('compose', '-f', $gymCompose,
+                    'run', '--rm', '--entrypoint', 'python', 'ran-gym-unit',
+                    '-m', 'agentic_ran.research_commag_evidence_audit',
+                    '--source', "/workspace/results/$RunId/offline", '--output', "/workspace/results/$RunId/commag-audit")
+            }
         }
         Invoke-Stage 'pulse_logged_shadow' {
             Invoke-Verified 'PULSE descriptive logged shadow (not actuation)' @('compose', '-f', $pubCompose,
@@ -270,6 +311,9 @@ try {
     Save-RunManifest
 }
 Write-Host "Research output: $runRoot" -ForegroundColor Green
+if ($ExpandedStudy) {
+    Write-Host "Fresh-seed PA-SPI report: $(Join-Path $runRoot 'confirmatory/report.html')" -ForegroundColor Green
+}
 Write-Host "HTML report: $(Join-Path $runRoot 'final-report/ieee_access_report.html')" -ForegroundColor Green
 Write-Host "Evidence JSON: $(Join-Path $runRoot 'final-report/ieee_access_evidence.json')" -ForegroundColor Green
 $evidencePath = Join-Path $runRoot 'final-report/ieee_access_evidence.json'

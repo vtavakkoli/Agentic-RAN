@@ -183,6 +183,27 @@ def inspect_campaign(data: dict[str, Any] | None, root: Path) -> dict[str, Any]:
         "executed_steps": data.get("total_executed_steps"),
         "all_positive": data.get("all_comparisons_show_significant_positive_gain") is True,
     })
+    if not out["errors"]:
+        # Descriptive winner is independent of the predeclared PPO-WSP test.
+        try:
+            grouped = {}
+            with (root / "training_run_means.csv").open(encoding="utf-8", newline="") as stream:
+                for row in csv.DictReader(stream):
+                    values = tuple(float(row[k]) for k in
+                                   ("mean_total_reward", "mean_sla", "mean_switch_rate"))
+                    if not all(math.isfinite(v) for v in values):
+                        raise ValueError("nonfinite run mean")
+                    grouped.setdefault(row["policy"], []).append(values)
+            if not grouped or any(len(v) != data["training_runs"] for v in grouped.values()):
+                raise ValueError("missing run mean")
+            ranks = [{"policy": k, "mean_reward": sum(r[0] for r in v) / len(v),
+                      "mean_sla": sum(r[1] for r in v) / len(v),
+                      "mean_switch_rate": sum(r[2] for r in v) / len(v)}
+                     for k, v in grouped.items()]
+            out["rankings"] = sorted(ranks, key=lambda x: x["mean_reward"], reverse=True)
+            out["winner_by_mean_toy_return"] = out["rankings"][0]["policy"]
+        except (OSError, KeyError, ValueError, TypeError) as exc:
+            out["errors"].append(f"invalid run ranking: {exc}")
     out["passed"] = not out["errors"]
     return out
 
@@ -261,12 +282,39 @@ def produce(run_root: Path, out: Path, manifest_path: Path | None = None) -> dic
     offline_required = flags.get("include_offline", True)
     native_required = flags.get("include_native", True)
     physical_required = flags.get("include_physical", False)
+    expanded_required = flags.get("include_expanded_study", False)
+    expanded_dir = run_root / "confirmatory"
+    expanded, _ = read_json(expanded_dir / "summary.json")
+    expanded_hashes, _ = read_json(expanded_dir / "artifact_sha256.json")
+    expanded_verified = False
+    if expanded and expanded_hashes:
+        required = {"summary.json", "protocol_frozen.json", "rankings.csv", "report.html"}
+        try:
+            expanded_verified = (
+                required.issubset(expanded_hashes)
+                and all(
+                    not Path(name).is_absolute()
+                    and ".." not in Path(name).parts
+                    and (expanded_dir / name).is_file()
+                    and digest(expanded_dir / name) == value
+                    for name, value in expanded_hashes.items()
+                )
+                and expanded.get("physical_nr_evidence") is False
+                and expanded.get("publication_ready_for_ieee_access") is False
+            )
+        except (OSError, ValueError, TypeError):
+            expanded_verified = False
+    conditional, _ = read_json(run_root / "commag-audit" / "summary.json")
     physical_pass = bool(isinstance(physical_gate, dict) and physical_gate.get("gate_passed") is True)
     all_stages_success = bool(stage_states) and all(x.get("status") == "passed" for x in stage_states.values())
     package_complete = (campaign["passed"] and not campaign.get("smoke", True)
                         and (not offline_required or offline["passed"]) and
                         (not native_required or native["passed"]) and all_stages_success and
-                        manifest_err is None)
+                        manifest_err is None
+                        and (not expanded_required or (
+                            expanded_verified and expanded.get("smoke") is False
+                            and (not offline_required or conditional is not None)
+                        )))
     # No automatic acceptance; physical evidence and independent scholarly review remain necessary.
     physical_prb_validated = physical_pass and physical_required
     checks = {
@@ -276,6 +324,7 @@ def produce(run_root: Path, out: Path, manifest_path: Path | None = None) -> dic
         "native_udp_episodes_required_and_verified": native["passed"] if native_required else None,
         "real_prb_scheduler_closed_loop_gate": physical_prb_validated,
         "independent_reviewer_and_novelty_assessment": False,
+        "expanded_paspi_artifacts_verified": expanded_verified if expanded_required else None,
     }
     conclusion = ("DATASET_AND_EXPERIMENT_PACKAGE_COMPLETE; NR_PHYSICAL_GATE_PENDING"
                   if package_complete else
@@ -296,6 +345,8 @@ def produce(run_root: Path, out: Path, manifest_path: Path | None = None) -> dic
         "offline": offline,
         "native": native,
         "pulse_shadow_present": pulse_data is not None,
+        "expanded_paspi": expanded if expanded_verified else None,
+        "commag_conditional_evidence_audit": conditional,
         "external_physical_gate_passed": physical_pass,
         "stage_status": stage_states,
         "warnings": ([manifest_err] if manifest_err else []) + [
@@ -388,6 +439,20 @@ def produce(run_root: Path, out: Path, manifest_path: Path | None = None) -> dic
            "- `fig_toy_reward_deltas.svg`: toy experiment visualization (when evidence exists).",
            "- `sha256_manifest.json`: SHA-256 checksums for produced report artifacts.",
            ""]
+    if campaign.get("winner_by_mean_toy_return"):
+        md.extend(["", "## Original six-controller descriptive ranking", "",
+                   f"Winner by mean toy return: {campaign['winner_by_mean_toy_return']}.",
+                   "Original PPO-WSP hypothesis remains unchanged; these data are exploratory for PA-SPI."])
+    if expanded_verified:
+        md.extend(["", "## Independent PA-SPI confirmation (toy only)", "",
+                   f"- Descriptive winner: {expanded.get('winner_by_mean_toy_return')}.",
+                   f"- Primary improvement and SLA noninferiority: {expanded.get('primary_superiority_and_sla_noninferiority')}.",
+                   "- See ../confirmatory/report.html and rankings.csv for all policies, scenarios and tails.",
+                   "- A negative result is retained; no observed real NR outcomes are inferred."])
+    if conditional is not None:
+        md.extend(["", "## Conditional COMMAG evidence audit", "",
+                   "- See ../commag-audit/conditional_overlap_by_split_slice.csv and offline_estimate_labels.csv.",
+                   "- Unsupported outcomes are unidentified; action-set overlap is not conditional overlap."])
     text = "\n".join(md)
     (out / "ieee_access_report.md").write_text(text, encoding="utf-8")
     styled_html = '''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -404,8 +469,24 @@ def produce(run_root: Path, out: Path, manifest_path: Path | None = None) -> dic
     styled_html += f'<div class="alert"><strong>{html.escape(conclusion)}</strong><p>IEEE Access submission readiness is NOT automatically certified. UDP simulator integration is not NR PRB/scheduler validation.</p></div>'
     styled_html += f'<section class="stats"><div><b>Training runs</b><p>{html.escape(str(campaign.get("training_runs", "n/a")))}</p></div><div><b>Toy held-out episodes</b><p>{html.escape(str(campaign.get("executed_episodes", "n/a")))}</p></div><div><b>Native UDP episodes</b><p>{len(episode_rows)}</p></div></section>'
     styled_html += '<h2>Native ns-3.49 receiver-derived metrics</h2>' + html_table(episode_rows, native_columns)
+    if campaign.get("rankings"):
+        styled_html += '<h2>Original toy ranking (descriptive)</h2>' + html_table(
+            campaign["rankings"], ["policy", "mean_reward", "mean_sla", "mean_switch_rate"])
     styled_html += '<h2>Paired toy Gymnasium policy comparisons</h2>' + html_table(comp_rows, comp_columns) + svg
     styled_html += '<h2>Offline COMMAG audit</h2>' + '<p>'+html.escape(f"Present={offline['present']}; internal checks={offline['passed']}; heldout seen={offline.get('seen_test_rows','n/a')}; unseen={offline.get('unseen_test_rows','n/a')}")+'</p>'
+    if expanded_verified:
+        styled_html += (
+            '<h2>Fresh-seed PA-SPI confirmation (toy only)</h2><p>Winner: <b>'
+            + html.escape(str(expanded.get("winner_by_mean_toy_return"))) + '</b>; primary improvement and SLA '
+            + 'noninferiority: <b>' + html.escape(str(expanded.get("primary_superiority_and_sla_noninferiority")))
+            + '</b>. <a href="../confirmatory/report.html">Full rankings, scenarios and comparisons</a>.</p>'
+        )
+    if conditional is not None:
+        styled_html += (
+            '<h2>Conditional COMMAG audit</h2><p>Unsupported outcomes: unidentified. '
+            '<a href="../commag-audit/conditional_overlap_by_split_slice.csv">Conditional overlap</a> · '
+            '<a href="../commag-audit/offline_estimate_labels.csv">Separate observed/estimated outcomes</a>.</p>'
+        )
     styled_html += '<h2>Scientific gates</h2><ul>'+''.join(f'<li>{html.escape(name)}: <b>{html.escape(str(state))}</b></li>' for name,state in checks.items())+'</ul>'
     styled_html += '<h2>Paper framing and caveats</h2><p>Read the accompanying Markdown report for the manuscript outline, full limitations, submission checklist and provenance. All offline counterfactual and toy measurements retain their original evidence labels.</p>'
     styled_html += '<footer>Generated by agentic_ran.research_ieee_access_report. Negative outcomes are preserved; missing evidence is not synthesized.</footer></main></body></html>'
